@@ -11,7 +11,7 @@ import type {
   TableRowNode,
 } from '../types/ast.js';
 import { ptToEmu, ptToTwips } from '../types/common.js';
-import type { ParagraphStyle, TableCellStyle, TextStyle } from '../types/style.js';
+import type { ParagraphStyle, TableStyle, TextStyle } from '../types/style.js';
 
 function escapeXml(text: string): string {
   return text
@@ -485,17 +485,115 @@ export class StandardWmlBuilder implements WmlBuilder {
   }
 
   private serializeTable(table: TableNode, hyperlinkRelIds?: Map<string, string>): string {
+    const tblPr = this.serializeTableProperties(table.style);
+    let tblGrid = '';
+    if (table.columnWidthsPt && table.columnWidthsPt.length > 0) {
+      const cols = table.columnWidthsPt
+        .map((w) => `        <w:gridCol w:w="${Math.round(ptToTwips(w))}"/>`)
+        .join('\n');
+      tblGrid = `      <w:tblGrid>\n${cols}\n      </w:tblGrid>`;
+    }
+
     const rows = table.rows.map((row) => this.serializeTableRow(row, hyperlinkRelIds)).join('\n');
-    return ['    <w:tbl>', '      <w:tblPr/>', rows, '    </w:tbl>'].join('\n');
+    return ['    <w:tbl>', tblPr, tblGrid, rows, '    </w:tbl>'].filter(Boolean).join('\n');
+  }
+
+  private serializeTableProperties(style?: TableStyle): string {
+    if (!style || Object.keys(style).length === 0) {
+      return '      <w:tblPr/>';
+    }
+
+    const inner: string[] = [];
+
+    if (style.alignment) {
+      inner.push(`        <w:jc w:val="${style.alignment}"/>`);
+    }
+
+    if (style.widthPercent !== undefined) {
+      inner.push(`        <w:tblW w:w="${Math.round(style.widthPercent * 50)}" w:type="pct"/>`);
+    } else if (style.widthPt !== undefined) {
+      inner.push(`        <w:tblW w:w="${Math.round(ptToTwips(style.widthPt))}" w:type="dxa"/>`);
+    }
+
+    // Borders
+    const borders: string[] = [];
+    if (style.borderTop) borders.push(this.formatBorderElement('top', style.borderTop));
+    if (style.borderLeft) borders.push(this.formatBorderElement('left', style.borderLeft));
+    if (style.borderBottom) borders.push(this.formatBorderElement('bottom', style.borderBottom));
+    if (style.borderRight) borders.push(this.formatBorderElement('right', style.borderRight));
+    if (style.borderInsideH) borders.push(this.formatBorderElement('insideH', style.borderInsideH));
+    if (style.borderInsideV) borders.push(this.formatBorderElement('insideV', style.borderInsideV));
+
+    if (borders.length > 0) {
+      inner.push('        <w:tblBorders>', ...borders, '        </w:tblBorders>');
+    }
+
+    // Cell margins
+    const hasMargins =
+      style.cellMarginTopPt !== undefined ||
+      style.cellMarginRightPt !== undefined ||
+      style.cellMarginBottomPt !== undefined ||
+      style.cellMarginLeftPt !== undefined;
+
+    if (hasMargins) {
+      const margins: string[] = [];
+      if (style.cellMarginTopPt !== undefined) {
+        margins.push(`          <w:top w:w="${Math.round(ptToTwips(style.cellMarginTopPt))}" w:type="dxa"/>`);
+      }
+      if (style.cellMarginLeftPt !== undefined) {
+        margins.push(`          <w:left w:w="${Math.round(ptToTwips(style.cellMarginLeftPt))}" w:type="dxa"/>`);
+      }
+      if (style.cellMarginBottomPt !== undefined) {
+        margins.push(`          <w:bottom w:w="${Math.round(ptToTwips(style.cellMarginBottomPt))}" w:type="dxa"/>`);
+      }
+      if (style.cellMarginRightPt !== undefined) {
+        margins.push(`          <w:right w:w="${Math.round(ptToTwips(style.cellMarginRightPt))}" w:type="dxa"/>`);
+      }
+      inner.push('        <w:tblCellMar>', ...margins, '        </w:tblCellMar>');
+    }
+
+    if (inner.length === 0) {
+      return '      <w:tblPr/>';
+    }
+
+    return ['      <w:tblPr>', ...inner, '      </w:tblPr>'].join('\n');
+  }
+
+  private formatBorderElement(tag: string, borderDef: string, indent: string = '          '): string {
+    if (borderDef === 'none') {
+      return `${indent}<w:${tag} w:val="none"/>`;
+    }
+    const parts = borderDef.trim().split(/\s+/);
+    const borderType = parts[0] === 'solid' ? 'single' : (parts[0] || 'single');
+    const borderCol = parts[1] ? cleanHexColor(parts[1]) : 'auto';
+    return `${indent}<w:${tag} w:val="${borderType}" w:sz="4" w:space="0" w:color="${borderCol}"/>`;
   }
 
   private serializeTableRow(row: TableRowNode, hyperlinkRelIds?: Map<string, string>): string {
+    const trPr = this.serializeTableRowProperties(row);
     const cells = row.children.map((cell) => this.serializeTableCell(cell, hyperlinkRelIds)).join('\n');
-    return ['      <w:tr>', cells, '      </w:tr>'].join('\n');
+    return ['      <w:tr>', trPr, cells, '      </w:tr>'].filter(Boolean).join('\n');
+  }
+
+  private serializeTableRowProperties(row: TableRowNode): string {
+    const inner: string[] = [];
+
+    if (row.heightPt !== undefined) {
+      inner.push(`          <w:trHeight w:val="${Math.round(ptToTwips(row.heightPt))}"/>`);
+    }
+    if (row.cantSplit) {
+      inner.push('          <w:cantSplit/>');
+    }
+    if (row.tblHeader) {
+      inner.push('          <w:tblHeader/>');
+    }
+
+    if (inner.length === 0) return '';
+    return ['        <w:trPr>', ...inner, '        </w:trPr>'].join('\n');
   }
 
   private serializeTableCell(cell: TableCellNode, hyperlinkRelIds?: Map<string, string>): string {
-    const tcPr = this.serializeTableCellProperties(cell.style, cell.colSpan);
+    const tcPr = this.serializeTableCellProperties(cell);
     const content = cell.children
       .map((child) => {
         if (child.type === 'paragraph') return this.serializeParagraph(child, hyperlinkRelIds);
@@ -510,14 +608,55 @@ export class StandardWmlBuilder implements WmlBuilder {
       .join('\n');
   }
 
-  private serializeTableCellProperties(style?: TableCellStyle, colSpan?: number): string {
+  private serializeTableCellProperties(cell: TableCellNode): string {
     const inner: string[] = [];
+    const { style, colSpan, widthPt } = cell;
 
+    if (widthPt !== undefined) {
+      inner.push(`            <w:tcW w:w="${Math.round(ptToTwips(widthPt))}" w:type="dxa"/>`);
+    }
     if (colSpan && colSpan > 1) {
       inner.push(`            <w:gridSpan w:val="${colSpan}"/>`);
     }
     if (style?.backgroundColor) {
       inner.push(`            <w:shd w:fill="${cleanHexColor(style.backgroundColor)}"/>`);
+    }
+    if (style?.verticalAlign) {
+      inner.push(`            <w:vAlign w:val="${style.verticalAlign}"/>`);
+    }
+
+    // Cell borders
+    const borders: string[] = [];
+    if (style?.borderTop) borders.push(this.formatBorderElement('top', style.borderTop, '              '));
+    if (style?.borderLeft) borders.push(this.formatBorderElement('left', style.borderLeft, '              '));
+    if (style?.borderBottom) borders.push(this.formatBorderElement('bottom', style.borderBottom, '              '));
+    if (style?.borderRight) borders.push(this.formatBorderElement('right', style.borderRight, '              '));
+    if (borders.length > 0) {
+      inner.push('            <w:tcBorders>', ...borders, '            </w:tcBorders>');
+    }
+
+    // Cell margins (padding)
+    const hasPadding =
+      style?.paddingTopPt !== undefined ||
+      style?.paddingRightPt !== undefined ||
+      style?.paddingBottomPt !== undefined ||
+      style?.paddingLeftPt !== undefined;
+
+    if (hasPadding) {
+      const margins: string[] = [];
+      if (style.paddingTopPt !== undefined) {
+        margins.push(`              <w:top w:w="${Math.round(ptToTwips(style.paddingTopPt))}" w:type="dxa"/>`);
+      }
+      if (style.paddingLeftPt !== undefined) {
+        margins.push(`              <w:left w:w="${Math.round(ptToTwips(style.paddingLeftPt))}" w:type="dxa"/>`);
+      }
+      if (style.paddingBottomPt !== undefined) {
+        margins.push(`              <w:bottom w:w="${Math.round(ptToTwips(style.paddingBottomPt))}" w:type="dxa"/>`);
+      }
+      if (style.paddingRightPt !== undefined) {
+        margins.push(`              <w:right w:w="${Math.round(ptToTwips(style.paddingRightPt))}" w:type="dxa"/>`);
+      }
+      inner.push('            <w:tcMar>', ...margins, '            </w:tcMar>');
     }
 
     if (inner.length === 0) return '';

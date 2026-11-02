@@ -234,19 +234,63 @@ export class StandardHtmlRenderer implements HtmlRenderer {
   }
 
   private renderTable(table: TableNode): string {
+    const tableStyle: Record<string, string> = {
+      'border-collapse': 'collapse',
+    };
+
+    if (table.style?.widthPercent !== undefined) {
+      tableStyle['width'] = `${table.style.widthPercent}%`;
+    } else if (table.style?.widthPt !== undefined) {
+      tableStyle['width'] = `${table.style.widthPt}pt`;
+    } else {
+      tableStyle['width'] = '100%';
+    }
+
+    if (table.style?.alignment === 'center') {
+      tableStyle['margin-left'] = 'auto';
+      tableStyle['margin-right'] = 'auto';
+    } else if (table.style?.alignment === 'right') {
+      tableStyle['margin-left'] = 'auto';
+      tableStyle['margin-right'] = '0';
+    } else if (table.style?.alignment === 'left') {
+      tableStyle['margin-right'] = 'auto';
+    }
+
+    if (table.style?.borderTop) tableStyle['border-top'] = table.style.borderTop;
+    if (table.style?.borderRight) tableStyle['border-right'] = table.style.borderRight;
+    if (table.style?.borderBottom) tableStyle['border-bottom'] = table.style.borderBottom;
+    if (table.style?.borderLeft) tableStyle['border-left'] = table.style.borderLeft;
+
+    const styleAttr = ` style="${escapeXml(this.styleMapper.toCssString(tableStyle))}"`;
+
+    let colgroupHtml = '';
+    if (table.columnWidthsPt && table.columnWidthsPt.length > 0) {
+      const cols = table.columnWidthsPt.map((w) => `        <col style="width: ${w}pt;"/>`).join('\n');
+      colgroupHtml = `      <colgroup>\n${cols}\n      </colgroup>\n`;
+    }
+
     const rowsHtml = table.rows.map((row) => this.renderTableRow(row)).join('\n');
-    return `    <table class="ooxen-table" style="border-collapse: collapse; width: 100%;">\n      <tbody>\n${rowsHtml}\n      </tbody>\n    </table>`;
+    return `    <table class="ooxen-table"${styleAttr}>\n${colgroupHtml}      <tbody>\n${rowsHtml}\n      </tbody>\n    </table>`;
   }
 
   private renderTableRow(row: TableRowNode): string {
+    const styleObj: Record<string, string> = {};
+    if (row.heightPt !== undefined) {
+      styleObj['height'] = `${row.heightPt}pt`;
+    }
+    const styleAttr = Object.keys(styleObj).length > 0 ? ` style="${escapeXml(this.styleMapper.toCssString(styleObj))}"` : '';
     const cellsHtml = row.children.map((cell) => this.renderTableCell(cell)).join('');
-    return `        <tr class="ooxen-tr">${cellsHtml}</tr>`;
+    return `        <tr class="ooxen-tr"${styleAttr}>${cellsHtml}</tr>`;
   }
 
   private renderTableCell(cell: TableCellNode): string {
     const colSpanAttr = cell.colSpan && cell.colSpan > 1 ? ` colspan="${cell.colSpan}"` : '';
+    const rowSpanAttr = cell.rowSpan && cell.rowSpan > 1 ? ` rowspan="${cell.rowSpan}"` : '';
     const styleObj: Record<string, string> = {};
 
+    if (cell.widthPt !== undefined) {
+      styleObj['width'] = `${cell.widthPt}pt`;
+    }
     if (cell.style?.backgroundColor) {
       styleObj['background-color'] = cell.style.backgroundColor;
     }
@@ -254,6 +298,15 @@ export class StandardHtmlRenderer implements HtmlRenderer {
     if (cell.style?.borderRight) styleObj['border-right'] = cell.style.borderRight;
     if (cell.style?.borderBottom) styleObj['border-bottom'] = cell.style.borderBottom;
     if (cell.style?.borderLeft) styleObj['border-left'] = cell.style.borderLeft;
+
+    if (cell.style?.verticalAlign) {
+      styleObj['vertical-align'] = cell.style.verticalAlign === 'center' ? 'middle' : cell.style.verticalAlign;
+    }
+
+    if (cell.style?.paddingTopPt !== undefined) styleObj['padding-top'] = `${cell.style.paddingTopPt}pt`;
+    if (cell.style?.paddingRightPt !== undefined) styleObj['padding-right'] = `${cell.style.paddingRightPt}pt`;
+    if (cell.style?.paddingBottomPt !== undefined) styleObj['padding-bottom'] = `${cell.style.paddingBottomPt}pt`;
+    if (cell.style?.paddingLeftPt !== undefined) styleObj['padding-left'] = `${cell.style.paddingLeftPt}pt`;
 
     const styleAttr = Object.keys(styleObj).length > 0 ? ` style="${escapeXml(this.styleMapper.toCssString(styleObj))}"` : '';
     const innerHtml = cell.children
@@ -265,7 +318,7 @@ export class StandardHtmlRenderer implements HtmlRenderer {
       })
       .join('');
 
-    return `<td class="ooxen-tc"${colSpanAttr}${styleAttr}>${innerHtml}</td>`;
+    return `<td class="ooxen-tc"${colSpanAttr}${rowSpanAttr}${styleAttr}>${innerHtml}</td>`;
   }
 }
 

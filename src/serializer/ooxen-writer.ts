@@ -19,7 +19,7 @@ import type {
   TableRowNode,
 } from '../types/ast.js';
 import { base64ToUint8Array } from '../types/common.js';
-import type { ParagraphStyle, TableCellStyle, TextStyle } from '../types/style.js';
+import type { ParagraphStyle, TableCellStyle, TableStyle, TextStyle } from '../types/style.js';
 import { defaultPackageBuilder, type HeaderFooterPart, type ImageMediaPart, type PackageBuilder } from './package-builder.js';
 import { defaultWmlBuilder, type WmlBuilder } from './wml-builder.js';
 
@@ -667,42 +667,112 @@ export class StandardOoxenWriter implements OoxenWriter {
 
   private parseHtmlTable(tableNode: XmlNode): TableNode {
     const rows: TableRowNode[] = [];
+    let columnWidthsPt: number[] | undefined;
+    const tableStyle: TableStyle = {};
 
-    const findRows = (node: XmlNode): void => {
+    const css = this.parseCssStyle(tableNode.attributes['style']);
+    if (css['width']) {
+      if (css['width'].endsWith('%')) {
+        tableStyle.widthPercent = Number.parseFloat(css['width']);
+      } else if (css['width'].endsWith('pt')) {
+        tableStyle.widthPt = Number.parseFloat(css['width']);
+      }
+    }
+
+    if (css['margin-left'] === 'auto' && css['margin-right'] === 'auto') {
+      tableStyle.alignment = 'center';
+    } else if (css['margin-left'] === 'auto') {
+      tableStyle.alignment = 'right';
+    } else if (css['margin-right'] === 'auto') {
+      tableStyle.alignment = 'left';
+    }
+
+    if (css['border-top']) tableStyle.borderTop = css['border-top'];
+    if (css['border-right']) tableStyle.borderRight = css['border-right'];
+    if (css['border-bottom']) tableStyle.borderBottom = css['border-bottom'];
+    if (css['border-left']) tableStyle.borderLeft = css['border-left'];
+
+    const findElements = (node: XmlNode): void => {
       for (const child of node.children) {
         const tag = child.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
-        if (tag === 'tr') {
+        if (tag === 'colgroup') {
+          const cols: number[] = [];
+          for (const colChild of child.children) {
+            const colTag = colChild.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+            if (colTag === 'col') {
+              const colCss = this.parseCssStyle(colChild.attributes['style']);
+              if (colCss['width']?.endsWith('pt')) {
+                cols.push(Number.parseFloat(colCss['width']));
+              }
+            }
+          }
+          if (cols.length > 0) {
+            columnWidthsPt = cols;
+          }
+        } else if (tag === 'tr') {
           rows.push(this.parseHtmlTableRow(child));
         } else if (tag === 'tbody' || tag === 'thead' || tag === 'tfoot') {
-          findRows(child);
+          findElements(child);
         }
       }
     };
 
-    findRows(tableNode);
+    findElements(tableNode);
 
     return {
       type: 'table',
+      style: Object.keys(tableStyle).length > 0 ? tableStyle : undefined,
+      columnWidthsPt,
       rows,
     };
   }
 
   private parseHtmlTableRow(trNode: XmlNode): TableRowNode {
     const cells: TableCellNode[] = [];
+    const trCss = this.parseCssStyle(trNode.attributes['style']);
+    let heightPt: number | undefined;
+    if (trCss['height']?.endsWith('pt')) {
+      heightPt = Number.parseFloat(trCss['height']);
+    }
 
     for (const child of trNode.children) {
       const tag = child.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
       if (tag === 'td' || tag === 'th') {
         const colSpanAttr = child.attributes['colspan'];
         const colSpan = colSpanAttr ? Number(colSpanAttr) : undefined;
+        const rowSpanAttr = child.attributes['rowspan'];
+        const rowSpan = rowSpanAttr ? Number(rowSpanAttr) : undefined;
+
         const css = this.parseCssStyle(child.attributes['style']);
         const cellStyle: TableCellStyle = {};
+        let widthPt: number | undefined;
 
+        if (css['width']?.endsWith('pt')) {
+          widthPt = Number.parseFloat(css['width']);
+        }
         if (css['background-color']) cellStyle.backgroundColor = css['background-color'];
+        if (css['border-top']) cellStyle.borderTop = css['border-top'];
+        if (css['border-right']) cellStyle.borderRight = css['border-right'];
+        if (css['border-bottom']) cellStyle.borderBottom = css['border-bottom'];
+        if (css['border-left']) cellStyle.borderLeft = css['border-left'];
+
+        if (css['vertical-align']) {
+          if (css['vertical-align'] === 'middle') cellStyle.verticalAlign = 'center';
+          else if (css['vertical-align'] === 'top' || css['vertical-align'] === 'bottom') {
+            cellStyle.verticalAlign = css['vertical-align'];
+          }
+        }
+
+        if (css['padding-top']?.endsWith('pt')) cellStyle.paddingTopPt = Number.parseFloat(css['padding-top']);
+        if (css['padding-right']?.endsWith('pt')) cellStyle.paddingRightPt = Number.parseFloat(css['padding-right']);
+        if (css['padding-bottom']?.endsWith('pt')) cellStyle.paddingBottomPt = Number.parseFloat(css['padding-bottom']);
+        if (css['padding-left']?.endsWith('pt')) cellStyle.paddingLeftPt = Number.parseFloat(css['padding-left']);
 
         cells.push({
           type: 'table-cell',
           colSpan: colSpan && colSpan > 1 ? colSpan : undefined,
+          rowSpan: rowSpan && rowSpan > 1 ? rowSpan : undefined,
+          widthPt,
           style: Object.keys(cellStyle).length > 0 ? cellStyle : undefined,
           children: this.parseBlockNodes(child.children),
         });
@@ -711,6 +781,7 @@ export class StandardOoxenWriter implements OoxenWriter {
 
     return {
       type: 'table-row',
+      heightPt,
       children: cells,
     };
   }

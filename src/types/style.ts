@@ -44,4 +44,21 @@ export interface TableCellStyle {
   paddingRightPt?: number;
   paddingBottomPt?: number;
   paddingLeftPt?: number;
+  verticalAlign?: 'top' | 'center' | 'bottom';
+}
+
+export interface TableStyle {
+  alignment?: 'left' | 'center' | 'right';
+  widthPt?: number;
+  widthPercent?: number;
+  borderTop?: string;
+  borderRight?: string;
+  borderBottom?: string;
+  borderLeft?: string;
+  borderInsideH?: string;
+  borderInsideV?: string;
+  cellMarginTopPt?: number;
+  cellMarginRightPt?: number;
+  cellMarginBottomPt?: number;
+  cellMarginLeftPt?: number;
 }

@@ -362,28 +362,117 @@ export class StandardPageEngine implements PageEngine {
     const rowCount = table.rows.length;
     if (rowCount === 0) return;
 
+    // Determine target table width if specified
+    let targetTableWidth: number | undefined;
+    if (table.style?.widthPercent !== undefined) {
+      targetTableWidth = (contentWidth * table.style.widthPercent) / 100;
+    } else if (table.style?.widthPt !== undefined) {
+      targetTableWidth = table.style.widthPt;
+    }
+
+    // Determine base grid column widths if w:tblGrid is provided
+    let baseColWidths: number[] | undefined;
+    if (table.columnWidthsPt && table.columnWidthsPt.length > 0) {
+      const rawCols = [...table.columnWidthsPt];
+      const rawTotal = rawCols.reduce((a, b) => a + b, 0);
+      if (targetTableWidth !== undefined && rawTotal > 0) {
+        const factor = targetTableWidth / rawTotal;
+        baseColWidths = rawCols.map((w) => w * factor);
+      } else if (rawTotal > contentWidth && rawTotal > 0) {
+        const factor = contentWidth / rawTotal;
+        baseColWidths = rawCols.map((w) => w * factor);
+      } else {
+        baseColWidths = rawCols;
+      }
+    }
+
     for (const row of table.rows) {
       const cellCount = row.children.length;
       if (cellCount === 0) continue;
 
-      const colWidth = contentWidth / cellCount;
-      let maxCellHeight = 20;
+      // Compute width for each cell in this row
+      const cellWidths: number[] = [];
+      if (baseColWidths && baseColWidths.length > 0) {
+        let gridIndex = 0;
+        for (let c = 0; c < cellCount; c++) {
+          const cell = row.children[c]!;
+          const span = cell.colSpan ?? 1;
+          let cellW = 0;
+          for (let s = 0; s < span && gridIndex + s < baseColWidths.length; s++) {
+            cellW += baseColWidths[gridIndex + s]!;
+          }
+          if (cellW <= 0) {
+            cellW = cell.widthPt ?? contentWidth / cellCount;
+          }
+          cellWidths.push(cellW);
+          gridIndex += span;
+        }
+      } else {
+        const hasExplicitWidths = row.children.some((c) => c.widthPt !== undefined);
+        if (hasExplicitWidths) {
+          for (let c = 0; c < cellCount; c++) {
+            cellWidths.push(row.children[c]!.widthPt ?? contentWidth / cellCount);
+          }
+          const sumW = cellWidths.reduce((a, b) => a + b, 0);
+          if (sumW > contentWidth && sumW > 0) {
+            const factor = contentWidth / sumW;
+            for (let i = 0; i < cellWidths.length; i++) {
+              cellWidths[i]! *= factor;
+            }
+          }
+        } else {
+          const defaultW = (targetTableWidth ?? contentWidth) / cellCount;
+          for (let c = 0; c < cellCount; c++) {
+            cellWidths.push(defaultW);
+          }
+        }
+      }
 
-      // Layout each cell
+      // Calculate table start X coordinate based on table alignment
+      const actualRowWidth = cellWidths.reduce((a, b) => a + b, 0);
+      let startX = margins.left;
+      const alignment = table.style?.alignment ?? 'left';
+      if (alignment === 'center') {
+        const remaining = Math.max(0, contentWidth - actualRowWidth);
+        startX += remaining / 2;
+      } else if (alignment === 'right') {
+        const remaining = Math.max(0, contentWidth - actualRowWidth);
+        startX += remaining;
+      }
+
+      // Calculate X positions for each cell
+      const cellXPositions: number[] = [];
+      let currentX = startX;
+      for (let c = 0; c < cellCount; c++) {
+        cellXPositions.push(currentX);
+        currentX += cellWidths[c]!;
+      }
+
+      let maxCellHeight = 20;
       const cellLinesMap: LayoutLine[][] = [];
+      const cellContentHeights: number[] = [];
+      const cellPaddings: { top: number; bottom: number; left: number; right: number }[] = [];
 
       for (let c = 0; c < cellCount; c++) {
         const cell = row.children[c]!;
+        const cellW = cellWidths[c]!;
+        const padTop = cell.style?.paddingTopPt ?? table.style?.cellMarginTopPt ?? 2;
+        const padBottom = cell.style?.paddingBottomPt ?? table.style?.cellMarginBottomPt ?? 2;
+        const padLeft = cell.style?.paddingLeftPt ?? table.style?.cellMarginLeftPt ?? 4;
+        const padRight = cell.style?.paddingRightPt ?? table.style?.cellMarginRightPt ?? 4;
+        cellPaddings.push({ top: padTop, bottom: padBottom, left: padLeft, right: padRight });
+
+        const innerWidth = Math.max(10, cellW - padLeft - padRight);
         const cellLines: LayoutLine[] = [];
         let cellY = 0;
 
         for (const child of cell.children) {
           if (child.type === 'paragraph') {
-            const pLines = this.lineBreaker.breakParagraph(child, colWidth - 8); // 4pt padding
+            const pLines = this.lineBreaker.breakParagraph(child, innerWidth);
             for (const pl of pLines) {
               cellLines.push({
                 bounds: {
-                  x: pl.bounds.x + 4,
+                  x: pl.bounds.x,
                   y: cellY + pl.bounds.y,
                   width: pl.bounds.width,
                   height: pl.bounds.height,
@@ -396,7 +485,7 @@ export class StandardPageEngine implements PageEngine {
           } else if (child.type === 'drawing') {
             cellLines.push({
               bounds: {
-                x: 4,
+                x: 0,
                 y: cellY,
                 width: child.widthPt,
                 height: child.heightPt,
@@ -414,7 +503,7 @@ export class StandardPageEngine implements PageEngine {
           } else if (child.type === 'image') {
             cellLines.push({
               bounds: {
-                x: 4,
+                x: 0,
                 y: cellY,
                 width: child.widthPt,
                 height: child.heightPt,
@@ -433,27 +522,46 @@ export class StandardPageEngine implements PageEngine {
         }
 
         cellLinesMap.push(cellLines);
-        if (cellY > maxCellHeight) {
-          maxCellHeight = cellY;
+        cellContentHeights.push(cellY);
+        const totalCellH = padTop + cellY + padBottom;
+        if (totalCellH > maxCellHeight) {
+          maxCellHeight = totalCellH;
         }
       }
 
+      const explicitRowHeight = row.heightPt ?? 0;
+      const rowHeight = Math.max(explicitRowHeight, maxCellHeight, 20);
+
       // Check page break for row
-      if (y + maxCellHeight > contentHeight && y > 0) {
+      if (y + rowHeight > contentHeight && y > 0) {
         onPageOverflow();
         y = 0;
       }
 
-      // Place cell lines into page
+      // Place cell lines into page with vertical alignment applied
       for (let c = 0; c < cellCount; c++) {
-        const cellX = margins.left + c * colWidth;
+        const cell = row.children[c]!;
+        const cellX = cellXPositions[c]!;
         const lines = cellLinesMap[c] ?? [];
+        const pad = cellPaddings[c]!;
+        const contentH = cellContentHeights[c]!;
+        const vAlign = cell.style?.verticalAlign ?? 'top';
+
+        const extraSpace = rowHeight - pad.top - pad.bottom - contentH;
+        let vOffset = pad.top;
+        if (extraSpace > 0) {
+          if (vAlign === 'center') {
+            vOffset += extraSpace / 2;
+          } else if (vAlign === 'bottom') {
+            vOffset += extraSpace;
+          }
+        }
 
         for (const l of lines) {
           pushLine({
             bounds: {
-              x: cellX + l.bounds.x,
-              y: margins.top + y + l.bounds.y,
+              x: cellX + pad.left + l.bounds.x,
+              y: margins.top + y + vOffset + l.bounds.y,
               width: l.bounds.width,
               height: l.bounds.height,
             },
@@ -463,7 +571,7 @@ export class StandardPageEngine implements PageEngine {
         }
       }
 
-      y += maxCellHeight;
+      y += rowHeight;
     }
 
     setY(y);

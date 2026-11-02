@@ -1,5 +1,5 @@
 import type { Margins, Size } from './common.js';
-import type { ParagraphStyle, TableCellStyle, TextStyle } from './style.js';
+import type { ParagraphStyle, TableCellStyle, TableStyle, TextStyle } from './style.js';
 
 /**
  * Universal Document AST (Abstract Syntax Tree) representing ISO/IEC 29500 WordprocessingML and DrawingML.
@@ -99,6 +99,7 @@ export interface ParagraphNode extends BaseASTNode {
 export interface TableCellNode extends BaseASTNode {
   type: 'table-cell';
   style?: TableCellStyle;
+  widthPt?: number;
   colSpan?: number;
   rowSpan?: number;
   children: BlockNode[];
@@ -106,11 +107,16 @@ export interface TableCellNode extends BaseASTNode {
 
 export interface TableRowNode extends BaseASTNode {
   type: 'table-row';
+  heightPt?: number;
+  cantSplit?: boolean;
+  tblHeader?: boolean;
   children: TableCellNode[];
 }
 
 export interface TableNode extends BaseASTNode {
   type: 'table';
+  style?: TableStyle;
+  columnWidthsPt?: number[];
   rows: TableRowNode[];
 }
 
