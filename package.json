@@ -1,0 +1,33 @@
+{
+  "name": "ooxen",
+  "version": "0.1.0",
+  "description": "Universal bidirectional read-write-render engine for Office Open XML (OOXML)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "ooxml",
+    "docx",
+    "xlsx",
+    "pptx",
+    "renderer",
+    "canvas",
+    "html",
+    "iso-iec-29500"
+  ],
+  "author": "Muhammad Abdurrahman",
+  "license": "Apache-2.0"
+}
