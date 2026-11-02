@@ -1,3 +1,4 @@
+import type { LayoutLine } from '../../layout/line-breaker.js';
 import type { PageLayout } from '../../layout/page-engine.js';
 import type { CanvasTarget } from './canvas-target.js';
 import { defaultDrawPrimitives, type DrawPrimitives } from './draw-primitives.js';
@@ -49,8 +50,22 @@ export class StandardPageRenderer implements PageRenderer {
       );
     }
 
-    // 3. Render each line and its fragments
-    for (const line of page.lines) {
+    // 3. Render header lines if present
+    if (page.headerLines) {
+      this.renderLines(page.headerLines, target);
+    }
+
+    // 4. Render body lines
+    this.renderLines(page.lines, target);
+
+    // 5. Render footer lines if present
+    if (page.footerLines) {
+      this.renderLines(page.footerLines, target);
+    }
+  }
+
+  private renderLines(lines: LayoutLine[], target: CanvasTarget): void {
+    for (const line of lines) {
       for (const fragment of line.fragments) {
         const fragX = line.bounds.x + fragment.bounds.x;
         const fragY = line.bounds.y + fragment.bounds.y;

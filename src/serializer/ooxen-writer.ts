@@ -1,10 +1,22 @@
 import { guessMimeType } from '../parser/dml/image-parser.js';
 import { generatePresetGeometry, parseSvgPathToCommands } from '../parser/dml/shape-parser.js';
 import { defaultXmlAdapter, type XmlAdapter, type XmlNode } from '../parser/xml-adapter.js';
-import type { BlockNode, DocumentNode, DrawingShapeNode, ImageNode, ParagraphNode, RunNode, SectionNode, TableCellNode, TableNode, TableRowNode } from '../types/ast.js';
+import type {
+  BlockNode,
+  DocumentNode,
+  DrawingShapeNode,
+  HeaderFooterNode,
+  ImageNode,
+  ParagraphNode,
+  RunNode,
+  SectionNode,
+  TableCellNode,
+  TableNode,
+  TableRowNode,
+} from '../types/ast.js';
 import { base64ToUint8Array } from '../types/common.js';
 import type { ParagraphStyle, TableCellStyle, TextStyle } from '../types/style.js';
-import { defaultPackageBuilder, type ImageMediaPart, type PackageBuilder } from './package-builder.js';
+import { defaultPackageBuilder, type HeaderFooterPart, type ImageMediaPart, type PackageBuilder } from './package-builder.js';
 import { defaultWmlBuilder, type WmlBuilder } from './wml-builder.js';
 
 /**
@@ -80,14 +92,59 @@ export class StandardOoxenWriter implements OoxenWriter {
       }
     };
 
+    const headerFooterParts: HeaderFooterPart[] = [];
+    const headerFooterRelIds = new Map<HeaderFooterNode, string>();
+    let hdrCounter = 1;
+    let ftrCounter = 1;
+
     for (const section of document.sections) {
       for (const block of section.children) {
         traverseBlock(block);
       }
+
+      if (section.headers) {
+        for (const kind of ['default', 'first', 'even'] as const) {
+          const node = section.headers[kind];
+          if (node && !headerFooterRelIds.has(node)) {
+            for (const b of node.children) traverseBlock(b);
+            const relId = `rIdHdr${hdrCounter}`;
+            const partName = `word/header${hdrCounter}.xml`;
+            hdrCounter++;
+            headerFooterRelIds.set(node, relId);
+            const xml = this.wmlBuilder.buildHeaderXml(node);
+            headerFooterParts.push({
+              partName,
+              relationshipId: relId,
+              type: 'header',
+              xml,
+            });
+          }
+        }
+      }
+
+      if (section.footers) {
+        for (const kind of ['default', 'first', 'even'] as const) {
+          const node = section.footers[kind];
+          if (node && !headerFooterRelIds.has(node)) {
+            for (const b of node.children) traverseBlock(b);
+            const relId = `rIdFtr${ftrCounter}`;
+            const partName = `word/footer${ftrCounter}.xml`;
+            ftrCounter++;
+            headerFooterRelIds.set(node, relId);
+            const xml = this.wmlBuilder.buildFooterXml(node);
+            headerFooterParts.push({
+              partName,
+              relationshipId: relId,
+              type: 'footer',
+              xml,
+            });
+          }
+        }
+      }
     }
 
-    const documentXml = this.wmlBuilder.buildDocumentXml(document);
-    const pkg = this.packageBuilder.assemblePackage(documentXml, undefined, undefined, mediaParts);
+    const documentXml = this.wmlBuilder.buildDocumentXml(document, headerFooterRelIds);
+    const pkg = this.packageBuilder.assemblePackage(documentXml, undefined, undefined, mediaParts, headerFooterParts);
     return pkg.serialize();
   }
 
@@ -103,30 +160,52 @@ export class StandardOoxenWriter implements OoxenWriter {
 
     if (sectionNodes.length === 0) {
       // Fallback: entire root is one section
-      sections.push({
-        type: 'section',
-        properties: {
-          pageSize: { width: 612, height: 792 },
-          margins: { top: 72, right: 72, bottom: 72, left: 72 },
-        },
-        children: this.parseBlockNodes(rootNode.children),
-      });
+      sections.push(this.parseSectionFromHtmlNodes(rootNode.children));
     } else {
       for (const sNode of sectionNodes) {
-        sections.push({
-          type: 'section',
-          properties: {
-            pageSize: { width: 612, height: 792 },
-            margins: { top: 72, right: 72, bottom: 72, left: 72 },
-          },
-          children: this.parseBlockNodes(sNode.children),
-        });
+        sections.push(this.parseSectionFromHtmlNodes(sNode.children));
       }
     }
 
     return {
       type: 'document',
       sections,
+    };
+  }
+
+  private parseSectionFromHtmlNodes(nodes: XmlNode[]): SectionNode {
+    let headerNode: HeaderFooterNode | undefined;
+    let footerNode: HeaderFooterNode | undefined;
+    const bodyNodes: XmlNode[] = [];
+
+    for (const node of nodes) {
+      const tag = node.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+      if (tag === 'header') {
+        headerNode = {
+          type: 'header',
+          kind: 'default',
+          children: this.parseBlockNodes(node.children),
+        };
+      } else if (tag === 'footer') {
+        footerNode = {
+          type: 'footer',
+          kind: 'default',
+          children: this.parseBlockNodes(node.children),
+        };
+      } else {
+        bodyNodes.push(node);
+      }
+    }
+
+    return {
+      type: 'section',
+      properties: {
+        pageSize: { width: 612, height: 792 },
+        margins: { top: 72, right: 72, bottom: 72, left: 72 },
+      },
+      children: this.parseBlockNodes(bodyNodes),
+      headers: headerNode ? { default: headerNode } : undefined,
+      footers: footerNode ? { default: footerNode } : undefined,
     };
   }
 
@@ -277,12 +356,21 @@ export class StandardOoxenWriter implements OoxenWriter {
           image = this.parseHtmlImage(imgChild);
         }
 
+        const className = child.attributes['class'] ?? '';
+        let field: string | undefined;
+        if (className.includes('ooxen-field-page') || child.textContent.trim() === '{{PAGE}}') {
+          field = 'PAGE';
+        } else if (className.includes('ooxen-field-numpages') || child.textContent.trim() === '{{NUMPAGES}}') {
+          field = 'NUMPAGES';
+        }
+
         runs.push({
           type: 'run',
-          text: child.textContent,
+          text: field ? (child.textContent.replace(/\{\{PAGE\}\}|\{\{NUMPAGES\}\}/g, '1') || '1') : child.textContent,
           style: Object.keys(rStyle).length > 0 ? rStyle : undefined,
           drawing,
           image,
+          field,
         });
       } else if (tag === 'img') {
         const image = this.parseHtmlImage(child);

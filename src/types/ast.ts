@@ -5,7 +5,18 @@ import type { ParagraphStyle, TableCellStyle, TextStyle } from './style.js';
  * Universal Document AST (Abstract Syntax Tree) representing ISO/IEC 29500 WordprocessingML and DrawingML.
  */
 
-export type ASTNodeType = 'document' | 'section' | 'paragraph' | 'run' | 'table' | 'table-row' | 'table-cell' | 'drawing' | 'image';
+export type ASTNodeType =
+  | 'document'
+  | 'section'
+  | 'paragraph'
+  | 'run'
+  | 'table'
+  | 'table-row'
+  | 'table-cell'
+  | 'drawing'
+  | 'image'
+  | 'header'
+  | 'footer';
 
 export interface BaseASTNode {
   type: ASTNodeType;
@@ -57,6 +68,7 @@ export interface RunNode extends BaseASTNode {
   style?: TextStyle;
   drawing?: DrawingShapeNode;
   image?: ImageNode;
+  field?: 'PAGE' | 'NUMPAGES' | string;
 }
 
 export interface ParagraphNode extends BaseASTNode {
@@ -85,15 +97,40 @@ export interface TableNode extends BaseASTNode {
 
 export type BlockNode = ParagraphNode | TableNode | DrawingShapeNode | ImageNode;
 
+export type HeaderFooterType = 'default' | 'first' | 'even';
+
+export interface HeaderFooterNode extends BaseASTNode {
+  type: 'header' | 'footer';
+  kind: HeaderFooterType;
+  children: BlockNode[];
+}
+
+export interface SectionHeaders {
+  default?: HeaderFooterNode;
+  first?: HeaderFooterNode;
+  even?: HeaderFooterNode;
+}
+
+export interface SectionFooters {
+  default?: HeaderFooterNode;
+  first?: HeaderFooterNode;
+  even?: HeaderFooterNode;
+}
+
 export interface SectionProperties {
   pageSize: Size; // points
   margins: Margins; // points
+  headerDistancePt?: number; // distance from top of page to header (default: 36 pt / 720 twips)
+  footerDistancePt?: number; // distance from bottom of page to footer (default: 36 pt / 720 twips)
+  titlePg?: boolean; // whether first page has different header/footer
 }
 
 export interface SectionNode extends BaseASTNode {
   type: 'section';
   properties: SectionProperties;
   children: BlockNode[];
+  headers?: SectionHeaders;
+  footers?: SectionFooters;
 }
 
 export interface DocumentNode extends BaseASTNode {

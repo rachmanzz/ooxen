@@ -20,6 +20,8 @@ export const KNOWN_RELATIONSHIPS = {
   STYLES: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles',
   NUMBERING: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering',
   IMAGE: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image',
+  HEADER: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/header',
+  FOOTER: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer',
 } as const;
 
 export function getRelationshipsPath(partPath?: string): string {

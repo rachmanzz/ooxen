@@ -31,6 +31,20 @@ export class StandardParagraphParser implements ParagraphParser {
         }
       } else if (tag === 'r') {
         runs.push(this.parseRun(child, styleResolver, imageResolver));
+      } else if (tag === 'fldsimple') {
+        const instr = (child.attributes['w:instr'] ?? child.attributes['instr'] ?? '').trim();
+        const fieldType = instr.toUpperCase().startsWith('PAGE')
+          ? 'PAGE'
+          : instr.toUpperCase().startsWith('NUMPAGES')
+            ? 'NUMPAGES'
+            : instr;
+        for (const fChild of child.children) {
+          if (fChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase() === 'r') {
+            const r = this.parseRun(fChild, styleResolver, imageResolver);
+            r.field = fieldType;
+            runs.push(r);
+          }
+        }
       } else if (tag === 'drawing' || tag === 'pict') {
         const parsedImage = parseImageNode(child, imageResolver);
         if (parsedImage) {
@@ -90,6 +104,7 @@ export class StandardParagraphParser implements ParagraphParser {
     let text = '';
     let drawing: DrawingShapeNode | undefined;
     let image: ImageNode | undefined;
+    let field: string | undefined;
 
     for (const child of node.children) {
       const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
@@ -102,6 +117,15 @@ export class StandardParagraphParser implements ParagraphParser {
         }
       } else if (tag === 't') {
         text += child.textContent;
+      } else if (tag === 'instrtext') {
+        const instr = child.textContent.trim().toUpperCase();
+        if (instr.startsWith('PAGE')) {
+          field = 'PAGE';
+        } else if (instr.startsWith('NUMPAGES')) {
+          field = 'NUMPAGES';
+        } else {
+          field = instr;
+        }
       } else if (tag === 'br') {
         text += '\n';
       } else if (tag === 'tab') {
@@ -129,6 +153,7 @@ export class StandardParagraphParser implements ParagraphParser {
       style: Object.keys(combinedStyle).length > 0 ? combinedStyle : undefined,
       drawing,
       image,
+      field,
     };
   }
 }

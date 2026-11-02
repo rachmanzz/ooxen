@@ -1,4 +1,4 @@
-import type { DocumentNode, ParagraphNode, TableNode } from '../types/ast.js';
+import type { DocumentNode, HeaderFooterNode, ParagraphNode, SectionNode, TableNode } from '../types/ast.js';
 import type { Margins, Size } from '../types/common.js';
 import { defaultLineBreaker, type LayoutLine, type LineBreaker } from './line-breaker.js';
 
@@ -11,6 +11,8 @@ export interface PageLayout {
   size: Size; // points
   margins: Margins; // points
   lines: LayoutLine[];
+  headerLines?: LayoutLine[];
+  footerLines?: LayoutLine[];
 }
 
 export interface PageEngine {
@@ -26,6 +28,7 @@ export class StandardPageEngine implements PageEngine {
 
   layoutDocument(document: DocumentNode): PageLayout[] {
     const pages: PageLayout[] = [];
+    const pageMetas: { page: PageLayout; section: SectionNode; sectionPageIndex: number }[] = [];
 
     for (const section of document.sections) {
       const { pageSize, margins } = section.properties;
@@ -33,16 +36,20 @@ export class StandardPageEngine implements PageEngine {
       const contentHeight = Math.max(50, pageSize.height - margins.top - margins.bottom);
 
       let currentPageIndex = pages.length;
+      let sectionPageIndex = 0;
       let currentLines: LayoutLine[] = [];
       let currentY = 0; // vertical position inside content box (0 to contentHeight)
 
       const emitPage = (): void => {
-        pages.push({
+        const page: PageLayout = {
           pageIndex: currentPageIndex,
           size: { ...pageSize },
           margins: { ...margins },
           lines: currentLines,
-        });
+        };
+        pages.push(page);
+        pageMetas.push({ page, section, sectionPageIndex });
+        sectionPageIndex++;
         currentPageIndex++;
         currentLines = [];
         currentY = 0;
@@ -133,7 +140,100 @@ export class StandardPageEngine implements PageEngine {
       }
     }
 
+    // Second pass: attach headerLines and footerLines with resolved totalPages and page numbers
+    const totalPages = pages.length;
+    for (const meta of pageMetas) {
+      const { page, section, sectionPageIndex } = meta;
+      const contentWidth = Math.max(50, page.size.width - page.margins.left - page.margins.right);
+
+      // 1. Resolve header
+      let headerNode: HeaderFooterNode | undefined;
+      if (sectionPageIndex === 0 && section.properties.titlePg && section.headers?.first) {
+        headerNode = section.headers.first;
+      } else if (page.pageIndex % 2 === 1 && section.headers?.even) {
+        headerNode = section.headers.even;
+      } else {
+        headerNode = section.headers?.default;
+      }
+
+      if (headerNode) {
+        const headerDist = section.properties.headerDistancePt ?? 36;
+        page.headerLines = this.layoutHeaderFooter(headerNode, contentWidth, headerDist, page.margins, page.pageIndex, totalPages);
+      }
+
+      // 2. Resolve footer
+      let footerNode: HeaderFooterNode | undefined;
+      if (sectionPageIndex === 0 && section.properties.titlePg && section.footers?.first) {
+        footerNode = section.footers.first;
+      } else if (page.pageIndex % 2 === 1 && section.footers?.even) {
+        footerNode = section.footers.even;
+      } else {
+        footerNode = section.footers?.default;
+      }
+
+      if (footerNode) {
+        const footerDist = section.properties.footerDistancePt ?? 36;
+        const footerY = page.size.height - footerDist - 16;
+        page.footerLines = this.layoutHeaderFooter(footerNode, contentWidth, footerY, page.margins, page.pageIndex, totalPages);
+      }
+    }
+
     return pages;
+  }
+
+  private layoutHeaderFooter(
+    node: HeaderFooterNode,
+    contentWidth: number,
+    baseY: number,
+    margins: Margins,
+    pageIndex: number,
+    totalPages: number,
+  ): LayoutLine[] {
+    const lines: LayoutLine[] = [];
+    let currentY = 0;
+
+    for (const block of node.children) {
+      if (block.type === 'paragraph') {
+        const resolvedParagraph = this.resolveFields(block, pageIndex, totalPages);
+        const pLines = this.lineBreaker.breakParagraph(resolvedParagraph, contentWidth);
+        for (const line of pLines) {
+          lines.push({
+            bounds: {
+              x: margins.left + line.bounds.x,
+              y: baseY + currentY + line.bounds.y,
+              width: line.bounds.width,
+              height: line.bounds.height,
+            },
+            baseline: line.baseline,
+            fragments: line.fragments,
+          });
+          currentY += line.bounds.height;
+        }
+      }
+    }
+
+    return lines;
+  }
+
+  private resolveFields(p: ParagraphNode, pageIndex: number, totalPages: number): ParagraphNode {
+    const pageNumStr = String(pageIndex + 1);
+    const totalPagesStr = String(totalPages);
+
+    const newChildren = p.children.map((run) => {
+      if (run.field === 'PAGE') {
+        return { ...run, text: pageNumStr };
+      }
+      if (run.field === 'NUMPAGES') {
+        return { ...run, text: totalPagesStr };
+      }
+      if (run.text.includes('{{PAGE}}') || run.text.includes('{{NUMPAGES}}')) {
+        const text = run.text.replace(/\{\{PAGE\}\}/g, pageNumStr).replace(/\{\{NUMPAGES\}\}/g, totalPagesStr);
+        return { ...run, text };
+      }
+      return run;
+    });
+
+    return { ...p, children: newChildren };
   }
 
   private layoutParagraph(

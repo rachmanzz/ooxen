@@ -13,6 +13,13 @@ export interface ImageMediaPart {
   data: Uint8Array;
 }
 
+export interface HeaderFooterPart {
+  partName: string;
+  relationshipId: string;
+  type: 'header' | 'footer';
+  xml: string;
+}
+
 /**
  * Assembles generated parts into a valid OPC container package.
  */
@@ -23,6 +30,7 @@ export interface PackageBuilder {
     customStylesXml?: string,
     customNumberingXml?: string,
     mediaParts?: ImageMediaPart[],
+    headerFooterParts?: HeaderFooterPart[],
   ): OpcPackage;
 }
 
@@ -43,6 +51,7 @@ export class StandardPackageBuilder implements PackageBuilder {
     customStylesXml?: string,
     customNumberingXml?: string,
     mediaParts: ImageMediaPart[] = [],
+    headerFooterParts: HeaderFooterPart[] = [],
   ): OpcPackage {
     const pkg = createPackage();
 
@@ -103,6 +112,22 @@ export class StandardPackageBuilder implements PackageBuilder {
         name: media.partName,
         contentType: media.contentType,
         data: media.data,
+      });
+    }
+
+    // 6. Add header and footer parts and relationships
+    for (const hf of headerFooterParts) {
+      const relTarget = hf.partName.replace(/^word\//, '');
+      pkg.addRelationship('word/document.xml', {
+        id: hf.relationshipId,
+        type: hf.type === 'header' ? KNOWN_RELATIONSHIPS.HEADER : KNOWN_RELATIONSHIPS.FOOTER,
+        target: relTarget,
+      });
+
+      pkg.setPart({
+        name: hf.partName,
+        contentType: hf.type === 'header' ? KNOWN_CONTENT_TYPES.WML_HEADER : KNOWN_CONTENT_TYPES.WML_FOOTER,
+        data: textEncoder.encode(hf.xml),
       });
     }
 

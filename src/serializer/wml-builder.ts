@@ -1,4 +1,15 @@
-import type { DocumentNode, DrawingShapeNode, ImageNode, ParagraphNode, RunNode, SectionNode, TableCellNode, TableNode, TableRowNode } from '../types/ast.js';
+import type {
+  DocumentNode,
+  DrawingShapeNode,
+  HeaderFooterNode,
+  ImageNode,
+  ParagraphNode,
+  RunNode,
+  SectionNode,
+  TableCellNode,
+  TableNode,
+  TableRowNode,
+} from '../types/ast.js';
 import { ptToEmu, ptToTwips } from '../types/common.js';
 import type { ParagraphStyle, TableCellStyle, TextStyle } from '../types/style.js';
 
@@ -21,11 +32,13 @@ function cleanHexColor(color?: string): string | undefined {
  */
 
 export interface WmlBuilder {
-  buildDocumentXml(document: DocumentNode): string;
+  buildDocumentXml(document: DocumentNode, headerFooterRelIds?: Map<HeaderFooterNode, string>): string;
+  buildHeaderXml(header: HeaderFooterNode): string;
+  buildFooterXml(footer: HeaderFooterNode): string;
 }
 
 export class StandardWmlBuilder implements WmlBuilder {
-  buildDocumentXml(document: DocumentNode): string {
+  buildDocumentXml(document: DocumentNode, headerFooterRelIds?: Map<HeaderFooterNode, string>): string {
     const lines: string[] = [
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
       '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">',
@@ -52,12 +65,12 @@ export class StandardWmlBuilder implements WmlBuilder {
 
       // Add section properties
       if (isLastSection) {
-        lines.push(this.serializeSectionProperties(section));
+        lines.push(this.serializeSectionProperties(section, '    ', headerFooterRelIds));
       } else {
         // Embed section break inside an empty paragraph if section is not the last one
         lines.push('    <w:p>');
         lines.push('      <w:pPr>');
-        lines.push(this.serializeSectionProperties(section, '        '));
+        lines.push(this.serializeSectionProperties(section, '        ', headerFooterRelIds));
         lines.push('      </w:pPr>');
         lines.push('    </w:p>');
       }
@@ -66,6 +79,58 @@ export class StandardWmlBuilder implements WmlBuilder {
     lines.push('  </w:body>');
     lines.push('</w:document>');
 
+    return lines.join('\n');
+  }
+
+  buildHeaderXml(header: HeaderFooterNode): string {
+    const lines: string[] = [
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">',
+    ];
+
+    for (const block of header.children) {
+      if (block.type === 'paragraph') {
+        lines.push(this.serializeParagraph(block));
+      } else if (block.type === 'table') {
+        lines.push(this.serializeTable(block));
+      } else if (block.type === 'drawing') {
+        lines.push(this.serializeBlockDrawing(block));
+      } else if (block.type === 'image') {
+        lines.push(this.serializeBlockImage(block));
+      }
+    }
+
+    if (header.children.length === 0) {
+      lines.push('  <w:p/>');
+    }
+
+    lines.push('</w:hdr>');
+    return lines.join('\n');
+  }
+
+  buildFooterXml(footer: HeaderFooterNode): string {
+    const lines: string[] = [
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">',
+    ];
+
+    for (const block of footer.children) {
+      if (block.type === 'paragraph') {
+        lines.push(this.serializeParagraph(block));
+      } else if (block.type === 'table') {
+        lines.push(this.serializeTable(block));
+      } else if (block.type === 'drawing') {
+        lines.push(this.serializeBlockDrawing(block));
+      } else if (block.type === 'image') {
+        lines.push(this.serializeBlockImage(block));
+      }
+    }
+
+    if (footer.children.length === 0) {
+      lines.push('  <w:p/>');
+    }
+
+    lines.push('</w:ftr>');
     return lines.join('\n');
   }
 
@@ -145,7 +210,17 @@ export class StandardWmlBuilder implements WmlBuilder {
       return '';
     }
 
-    return ['      <w:r>', rPr, ...textPieces, drawingXml, imageXml, '      </w:r>'].filter(Boolean).join('\n');
+    const runXml = ['      <w:r>', rPr, ...textPieces, drawingXml, imageXml, '      </w:r>'].filter(Boolean).join('\n');
+
+    if (r.field) {
+      return [
+        `      <w:fldSimple w:instr="${escapeXml(r.field)}">`,
+        runXml,
+        '      </w:fldSimple>',
+      ].join('\n');
+    }
+
+    return runXml;
   }
 
   private serializeImage(image: ImageNode): string {
@@ -342,7 +417,11 @@ export class StandardWmlBuilder implements WmlBuilder {
     return ['          <w:tcPr>', ...inner, '          </w:tcPr>'].join('\n');
   }
 
-  private serializeSectionProperties(section: SectionNode, indent: string = '    '): string {
+  private serializeSectionProperties(
+    section: SectionNode,
+    indent: string = '    ',
+    headerFooterRelIds?: Map<HeaderFooterNode, string>,
+  ): string {
     const { pageSize, margins } = section.properties;
     const wTwips = Math.round(ptToTwips(pageSize.width));
     const hTwips = Math.round(ptToTwips(pageSize.height));
@@ -351,13 +430,45 @@ export class StandardWmlBuilder implements WmlBuilder {
     const rightTwips = Math.round(ptToTwips(margins.right));
     const bottomTwips = Math.round(ptToTwips(margins.bottom));
     const leftTwips = Math.round(ptToTwips(margins.left));
+    const headerTwips = Math.round(ptToTwips(section.properties.headerDistancePt ?? 36));
+    const footerTwips = Math.round(ptToTwips(section.properties.footerDistancePt ?? 36));
+
+    const refs: string[] = [];
+
+    // Header references
+    if (section.headers?.default && headerFooterRelIds?.has(section.headers.default)) {
+      refs.push(`${indent}  <w:headerReference w:type="default" r:id="${headerFooterRelIds.get(section.headers.default)}"/>`);
+    }
+    if (section.headers?.first && headerFooterRelIds?.has(section.headers.first)) {
+      refs.push(`${indent}  <w:headerReference w:type="first" r:id="${headerFooterRelIds.get(section.headers.first)}"/>`);
+    }
+    if (section.headers?.even && headerFooterRelIds?.has(section.headers.even)) {
+      refs.push(`${indent}  <w:headerReference w:type="even" r:id="${headerFooterRelIds.get(section.headers.even)}"/>`);
+    }
+
+    // Footer references
+    if (section.footers?.default && headerFooterRelIds?.has(section.footers.default)) {
+      refs.push(`${indent}  <w:footerReference w:type="default" r:id="${headerFooterRelIds.get(section.footers.default)}"/>`);
+    }
+    if (section.footers?.first && headerFooterRelIds?.has(section.footers.first)) {
+      refs.push(`${indent}  <w:footerReference w:type="first" r:id="${headerFooterRelIds.get(section.footers.first)}"/>`);
+    }
+    if (section.footers?.even && headerFooterRelIds?.has(section.footers.even)) {
+      refs.push(`${indent}  <w:footerReference w:type="even" r:id="${headerFooterRelIds.get(section.footers.even)}"/>`);
+    }
+
+    const titlePgXml = section.properties.titlePg || section.headers?.first || section.footers?.first
+      ? `${indent}  <w:titlePg/>`
+      : '';
 
     return [
       `${indent}<w:sectPr>`,
+      ...refs,
       `${indent}  <w:pgSz w:w="${wTwips}" w:h="${hTwips}"/>`,
-      `${indent}  <w:pgMar w:top="${topTwips}" w:right="${rightTwips}" w:bottom="${bottomTwips}" w:left="${leftTwips}"/>`,
+      `${indent}  <w:pgMar w:top="${topTwips}" w:right="${rightTwips}" w:bottom="${bottomTwips}" w:left="${leftTwips}" w:header="${headerTwips}" w:footer="${footerTwips}"/>`,
+      titlePgXml,
       `${indent}</w:sectPr>`,
-    ].join('\n');
+    ].filter(Boolean).join('\n');
   }
 }
 

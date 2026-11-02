@@ -1,4 +1,16 @@
-import type { DrawingShapeNode, ImageNode, DocumentNode, ParagraphNode, RunNode, SectionNode, TableCellNode, TableNode, TableRowNode, VectorPathCommand } from '../../types/ast.js';
+import type {
+  BlockNode,
+  DocumentNode,
+  DrawingShapeNode,
+  ImageNode,
+  ParagraphNode,
+  RunNode,
+  SectionNode,
+  TableCellNode,
+  TableNode,
+  TableRowNode,
+  VectorPathCommand,
+} from '../../types/ast.js';
 import { uint8ArrayToBase64 } from '../../types/common.js';
 import { defaultStyleMapper, type StyleMapper } from './style-mapper.js';
 
@@ -83,16 +95,37 @@ export class StandardHtmlRenderer implements HtmlRenderer {
     };
 
     const styleStr = this.styleMapper.toCssString(styleObj);
+
+    let headerHtml = '';
+    const defaultHeader = section.headers?.default ?? section.headers?.first;
+    if (defaultHeader && defaultHeader.children.length > 0) {
+      const headerBlocks = defaultHeader.children
+        .map((b) => this.renderBlock(b))
+        .join('\n');
+      headerHtml = `    <header class="ooxen-header">\n${headerBlocks}\n    </header>\n`;
+    }
+
     const childrenHtml = section.children
-      .map((block) => {
-        if (block.type === 'paragraph') return this.renderParagraph(block);
-        if (block.type === 'table') return this.renderTable(block);
-        if (block.type === 'image') return `    ${renderImageToHtml(block)}`;
-        return `    ${renderShapeToSvg(block)}`;
-      })
+      .map((block) => this.renderBlock(block))
       .join('\n');
 
-    return `  <section class="ooxen-section" style="${escapeXml(styleStr)}">\n${childrenHtml}\n  </section>`;
+    let footerHtml = '';
+    const defaultFooter = section.footers?.default ?? section.footers?.first;
+    if (defaultFooter && defaultFooter.children.length > 0) {
+      const footerBlocks = defaultFooter.children
+        .map((b) => this.renderBlock(b))
+        .join('\n');
+      footerHtml = `\n    <footer class="ooxen-footer">\n${footerBlocks}\n    </footer>`;
+    }
+
+    return `  <section class="ooxen-section" style="${escapeXml(styleStr)}">\n${headerHtml}${childrenHtml}${footerHtml}\n  </section>`;
+  }
+
+  private renderBlock(block: BlockNode): string {
+    if (block.type === 'paragraph') return this.renderParagraph(block);
+    if (block.type === 'table') return this.renderTable(block);
+    if (block.type === 'image') return `    ${renderImageToHtml(block)}`;
+    return `    ${renderShapeToSvg(block)}`;
   }
 
   private renderParagraph(paragraph: ParagraphNode): string {
@@ -115,7 +148,8 @@ export class StandardHtmlRenderer implements HtmlRenderer {
     const escaped = escapeXml(run.text).replace(/\n/g, '<br/>');
     const shapeSvg = run.drawing ? renderShapeToSvg(run.drawing) : '';
     const imageHtml = run.image ? renderImageToHtml(run.image) : '';
-    return `<span class="ooxen-r"${styleAttr}>${escaped}${shapeSvg}${imageHtml}</span>`;
+    const fieldClass = run.field ? ` ooxen-field-${run.field.toLowerCase()}` : '';
+    return `<span class="ooxen-r${fieldClass}"${styleAttr}>${escaped}${shapeSvg}${imageHtml}</span>`;
   }
 
   private renderTable(table: TableNode): string {

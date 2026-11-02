@@ -1,7 +1,8 @@
-import type { BlockNode, DocumentNode, SectionNode, SectionProperties } from '../../types/ast.js';
+import type { BlockNode, DocumentNode, HeaderFooterType, SectionHeaders, SectionFooters, SectionNode, SectionProperties } from '../../types/ast.js';
 import { twipsToPt } from '../../types/common.js';
 import { defaultXmlAdapter, type XmlNode } from '../xml-adapter.js';
 import type { ImageResolver } from '../dml/image-parser.js';
+import type { HeaderFooterResolver } from './header-footer-parser.js';
 import type { NumberingResolver } from './numbering-resolver.js';
 import { defaultParagraphParser, type ParagraphParser } from './paragraph-parser.js';
 import type { StyleResolver } from './style-resolver.js';
@@ -12,8 +13,59 @@ import { defaultTableParser, type TableParser } from './table-parser.js';
  */
 
 export interface DocumentParser {
-  parseDocument(rootNode: XmlNode, styleResolver?: StyleResolver, numberingResolver?: NumberingResolver, imageResolver?: ImageResolver): DocumentNode;
-  parseDocumentXml(xmlString: string, styleResolver?: StyleResolver, numberingResolver?: NumberingResolver, imageResolver?: ImageResolver): DocumentNode;
+  parseDocument(
+    rootNode: XmlNode,
+    styleResolver?: StyleResolver,
+    numberingResolver?: NumberingResolver,
+    imageResolver?: ImageResolver,
+    headerFooterResolver?: HeaderFooterResolver,
+  ): DocumentNode;
+  parseDocumentXml(
+    xmlString: string,
+    styleResolver?: StyleResolver,
+    numberingResolver?: NumberingResolver,
+    imageResolver?: ImageResolver,
+    headerFooterResolver?: HeaderFooterResolver,
+  ): DocumentNode;
+}
+
+export function parseSectionHeaderFooterReferences(
+  sectPrNode?: XmlNode,
+  resolver?: HeaderFooterResolver,
+): { headers?: SectionHeaders; footers?: SectionFooters } {
+  if (!sectPrNode || !resolver) return {};
+
+  const headers: SectionHeaders = {};
+  const footers: SectionFooters = {};
+
+  for (const child of sectPrNode.children) {
+    const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+
+    if (tag === 'headerreference') {
+      const type = (child.attributes['w:type'] ?? child.attributes['type'] ?? 'default').toLowerCase() as HeaderFooterType;
+      const relId = child.attributes['r:id'] ?? child.attributes['id'] ?? child.attributes['w:id'];
+      if (relId) {
+        const resolved = resolver.resolveHeader(relId);
+        if (resolved) {
+          headers[type] = resolved;
+        }
+      }
+    } else if (tag === 'footerreference') {
+      const type = (child.attributes['w:type'] ?? child.attributes['type'] ?? 'default').toLowerCase() as HeaderFooterType;
+      const relId = child.attributes['r:id'] ?? child.attributes['id'] ?? child.attributes['w:id'];
+      if (relId) {
+        const resolved = resolver.resolveFooter(relId);
+        if (resolved) {
+          footers[type] = resolved;
+        }
+      }
+    }
+  }
+
+  return {
+    headers: Object.keys(headers).length > 0 ? headers : undefined,
+    footers: Object.keys(footers).length > 0 ? footers : undefined,
+  };
 }
 
 export function parseSectionProperties(node?: XmlNode): SectionProperties {
@@ -38,11 +90,17 @@ export function parseSectionProperties(node?: XmlNode): SectionProperties {
       const right = child.attributes['w:right'] ?? child.attributes['right'];
       const bottom = child.attributes['w:bottom'] ?? child.attributes['bottom'];
       const left = child.attributes['w:left'] ?? child.attributes['left'];
+      const header = child.attributes['w:header'] ?? child.attributes['header'];
+      const footer = child.attributes['w:footer'] ?? child.attributes['footer'];
 
       if (top) props.margins.top = twipsToPt(Number(top));
       if (right) props.margins.right = twipsToPt(Number(right));
       if (bottom) props.margins.bottom = twipsToPt(Number(bottom));
       if (left) props.margins.left = twipsToPt(Number(left));
+      if (header) props.headerDistancePt = twipsToPt(Number(header));
+      if (footer) props.footerDistancePt = twipsToPt(Number(footer));
+    } else if (tag === 'titlepg') {
+      props.titlePg = true;
     }
   }
 
@@ -66,9 +124,10 @@ export class StandardDocumentParser implements DocumentParser {
     styleResolver?: StyleResolver,
     numberingResolver?: NumberingResolver,
     imageResolver?: ImageResolver,
+    headerFooterResolver?: HeaderFooterResolver,
   ): DocumentNode {
     const rootNode = defaultXmlAdapter.parse(xmlString);
-    return this.parseDocument(rootNode, styleResolver, numberingResolver, imageResolver);
+    return this.parseDocument(rootNode, styleResolver, numberingResolver, imageResolver, headerFooterResolver);
   }
 
   parseDocument(
@@ -76,6 +135,7 @@ export class StandardDocumentParser implements DocumentParser {
     styleResolver?: StyleResolver,
     numberingResolver?: NumberingResolver,
     imageResolver?: ImageResolver,
+    headerFooterResolver?: HeaderFooterResolver,
   ): DocumentNode {
     // Find w:body
     let bodyNode: XmlNode | undefined;
@@ -112,10 +172,13 @@ export class StandardDocumentParser implements DocumentParser {
         const pPr = child.children.find((c) => c.nodeName.toLowerCase().endsWith('ppr'));
         const sectPr = pPr?.children.find((c) => c.nodeName.toLowerCase().endsWith('sectpr'));
         if (sectPr) {
+          const { headers, footers } = parseSectionHeaderFooterReferences(sectPr, headerFooterResolver);
           sections.push({
             type: 'section',
             properties: parseSectionProperties(sectPr),
             children: currentBlocks,
+            headers,
+            footers,
           });
           currentBlocks = [];
         }
@@ -124,10 +187,13 @@ export class StandardDocumentParser implements DocumentParser {
         currentBlocks.push(table);
       } else if (tag === 'sectpr') {
         // Final section properties for the body
+        const { headers, footers } = parseSectionHeaderFooterReferences(child, headerFooterResolver);
         sections.push({
           type: 'section',
           properties: parseSectionProperties(child),
           children: currentBlocks,
+          headers,
+          footers,
         });
         currentBlocks = [];
       }
