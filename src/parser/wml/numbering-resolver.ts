@@ -42,6 +42,32 @@ export interface NumberingResolver {
 }
 
 /**
+ * Normalizes case-insensitive number format strings into canonical NumberFormatType
+ */
+export function normalizeNumberFormat(raw?: string): NumberFormatType {
+  if (!raw) return 'decimal';
+  const lower = raw.toLowerCase();
+  switch (lower) {
+    case 'decimal':
+      return 'decimal';
+    case 'bullet':
+      return 'bullet';
+    case 'lowerletter':
+      return 'lowerLetter';
+    case 'upperletter':
+      return 'upperLetter';
+    case 'lowerroman':
+      return 'lowerRoman';
+    case 'upperroman':
+      return 'upperRoman';
+    case 'none':
+      return 'none';
+    default:
+      return 'decimal';
+  }
+}
+
+/**
  * Converts integer to lowercase letters (1 -> 'a', 26 -> 'z', 27 -> 'aa')
  */
 export function toLowerLetter(n: number): string {
@@ -156,7 +182,7 @@ export class StandardNumberingResolver implements NumberingResolver {
                 if (sVal) start = Number.parseInt(sVal, 10);
               } else if (pTag === 'numfmt') {
                 const fVal = prop.attributes['w:val'] ?? prop.attributes['val'];
-                if (fVal) format = fVal.toLowerCase() as NumberFormatType;
+                if (fVal) format = normalizeNumberFormat(fVal);
               } else if (pTag === 'lvltext') {
                 const tVal = prop.attributes['w:val'] ?? prop.attributes['val'];
                 if (tVal) levelText = tVal;
@@ -279,16 +305,16 @@ export class StandardNumberingResolver implements NumberingResolver {
   }
 
   private formatValue(value: number, format: NumberFormatType): string {
-    switch (format) {
+    switch (format.toLowerCase()) {
       case 'decimal':
         return String(value);
-      case 'lowerLetter':
+      case 'lowerletter':
         return toLowerLetter(value);
-      case 'upperLetter':
+      case 'upperletter':
         return toLowerLetter(value).toUpperCase();
-      case 'lowerRoman':
+      case 'lowerroman':
         return toRoman(value, false);
-      case 'upperRoman':
+      case 'upperroman':
         return toRoman(value, true);
       default:
         return String(value);
