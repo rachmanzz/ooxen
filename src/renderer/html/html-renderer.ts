@@ -1,9 +1,98 @@
-import type { DocumentNode } from '../../types/ast.js';
+import type { DocumentNode, ParagraphNode, RunNode, SectionNode, TableCellNode, TableNode, TableRowNode } from '../../types/ast.js';
+import { defaultStyleMapper, type StyleMapper } from './style-mapper.js';
+
+function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
 
 /**
- * Renders Document AST into semantic HTML markup or DOM nodes.
+ * Strict well-formed XML-HTML (XHTML) Document Renderer.
  */
 
 export interface HtmlRenderer {
   renderToHtmlString(document: DocumentNode): string;
 }
+
+export class StandardHtmlRenderer implements HtmlRenderer {
+  private styleMapper: StyleMapper;
+
+  constructor(styleMapper: StyleMapper = defaultStyleMapper) {
+    this.styleMapper = styleMapper;
+  }
+
+  renderToHtmlString(document: DocumentNode): string {
+    const sectionsHtml = document.sections.map((s) => this.renderSection(s)).join('\n');
+    return `<article class="ooxen-document" xmlns="http://www.w3.org/1999/xhtml">\n${sectionsHtml}\n</article>`;
+  }
+
+  private renderSection(section: SectionNode): string {
+    const { pageSize, margins } = section.properties;
+    const styleObj: Record<string, string> = {
+      width: `${pageSize.width}pt`,
+      'min-height': `${pageSize.height}pt`,
+      padding: `${margins.top}pt ${margins.right}pt ${margins.bottom}pt ${margins.left}pt`,
+      'box-sizing': 'border-box',
+    };
+
+    const styleStr = this.styleMapper.toCssString(styleObj);
+    const childrenHtml = section.children
+      .map((block) => (block.type === 'paragraph' ? this.renderParagraph(block) : this.renderTable(block)))
+      .join('\n');
+
+    return `  <section class="ooxen-section" style="${escapeXml(styleStr)}">\n${childrenHtml}\n  </section>`;
+  }
+
+  private renderParagraph(paragraph: ParagraphNode): string {
+    const cssObj = this.styleMapper.paragraphStyleToCss(paragraph.style);
+    const styleAttr = Object.keys(cssObj).length > 0 ? ` style="${escapeXml(this.styleMapper.toCssString(cssObj))}"` : '';
+
+    const runsHtml = paragraph.children.map((run) => this.renderRun(run)).join('');
+    return `    <p class="ooxen-p"${styleAttr}>${runsHtml}</p>`;
+  }
+
+  private renderRun(run: RunNode): string {
+    const cssObj = this.styleMapper.textStyleToCss(run.style);
+    const styleAttr = Object.keys(cssObj).length > 0 ? ` style="${escapeXml(this.styleMapper.toCssString(cssObj))}"` : '';
+
+    // Convert newlines in run text to self-closing <br/> tags
+    const escaped = escapeXml(run.text).replace(/\n/g, '<br/>');
+    return `<span class="ooxen-r"${styleAttr}>${escaped}</span>`;
+  }
+
+  private renderTable(table: TableNode): string {
+    const rowsHtml = table.rows.map((row) => this.renderTableRow(row)).join('\n');
+    return `    <table class="ooxen-table" style="border-collapse: collapse; width: 100%;">\n      <tbody>\n${rowsHtml}\n      </tbody>\n    </table>`;
+  }
+
+  private renderTableRow(row: TableRowNode): string {
+    const cellsHtml = row.children.map((cell) => this.renderTableCell(cell)).join('');
+    return `        <tr class="ooxen-tr">${cellsHtml}</tr>`;
+  }
+
+  private renderTableCell(cell: TableCellNode): string {
+    const colSpanAttr = cell.colSpan && cell.colSpan > 1 ? ` colspan="${cell.colSpan}"` : '';
+    const styleObj: Record<string, string> = {};
+
+    if (cell.style?.backgroundColor) {
+      styleObj['background-color'] = cell.style.backgroundColor;
+    }
+    if (cell.style?.borderTop) styleObj['border-top'] = cell.style.borderTop;
+    if (cell.style?.borderRight) styleObj['border-right'] = cell.style.borderRight;
+    if (cell.style?.borderBottom) styleObj['border-bottom'] = cell.style.borderBottom;
+    if (cell.style?.borderLeft) styleObj['border-left'] = cell.style.borderLeft;
+
+    const styleAttr = Object.keys(styleObj).length > 0 ? ` style="${escapeXml(this.styleMapper.toCssString(styleObj))}"` : '';
+    const innerHtml = cell.children
+      .map((child) => (child.type === 'paragraph' ? this.renderParagraph(child) : this.renderTable(child)))
+      .join('');
+
+    return `<td class="ooxen-tc"${colSpanAttr}${styleAttr}>${innerHtml}</td>`;
+  }
+}
+
+export const defaultHtmlRenderer = new StandardHtmlRenderer();
