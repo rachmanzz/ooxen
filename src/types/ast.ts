@@ -102,6 +102,7 @@ export interface TableCellNode extends BaseASTNode {
   widthPt?: number;
   colSpan?: number;
   rowSpan?: number;
+  vMerge?: 'restart' | 'continue';
   children: BlockNode[];
 }
 

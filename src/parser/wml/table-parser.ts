@@ -37,6 +37,8 @@ export class StandardTableParser implements TableParser {
       }
     }
 
+    this.resolveVerticalMerges(rows);
+
     return {
       type: 'table',
       style: style && Object.keys(style).length > 0 ? style : undefined,
@@ -148,9 +150,41 @@ export class StandardTableParser implements TableParser {
     };
   }
 
+  private resolveVerticalMerges(rows: TableRowNode[]): void {
+    const activeMerges: Map<number, TableCellNode> = new Map();
+
+    for (const row of rows) {
+      let colIndex = 0;
+
+      for (const cell of row.children) {
+        const span = cell.colSpan ?? 1;
+
+        if (cell.vMerge === 'restart') {
+          cell.rowSpan = 1;
+          for (let s = 0; s < span; s++) {
+            activeMerges.set(colIndex + s, cell);
+          }
+        } else if (cell.vMerge === 'continue') {
+          const originCell = activeMerges.get(colIndex);
+          if (originCell) {
+            originCell.rowSpan = (originCell.rowSpan ?? 1) + 1;
+            cell.rowSpan = 0;
+          }
+        } else {
+          for (let s = 0; s < span; s++) {
+            activeMerges.delete(colIndex + s);
+          }
+        }
+
+        colIndex += span;
+      }
+    }
+  }
+
   private parseCell(node: XmlNode, styleResolver?: StyleResolver, numberingResolver?: NumberingResolver): TableCellNode {
     let colSpan: number | undefined;
     let widthPt: number | undefined;
+    let vMerge: 'restart' | 'continue' | undefined;
     let style: TableCellStyle | undefined;
     const children: BlockNode[] = [];
 
@@ -162,6 +196,7 @@ export class StandardTableParser implements TableParser {
         style = parsedPr.style;
         widthPt = parsedPr.widthPt;
         colSpan = parsedPr.colSpan;
+        vMerge = parsedPr.vMerge;
       } else if (tag === 'p') {
         children.push(this.paragraphParser.parseParagraph(child, styleResolver, numberingResolver));
       } else if (tag === 'tbl') {
@@ -172,6 +207,8 @@ export class StandardTableParser implements TableParser {
     return {
       type: 'table-cell',
       colSpan,
+      rowSpan: vMerge === 'restart' ? 1 : vMerge === 'continue' ? 0 : undefined,
+      vMerge,
       widthPt,
       style: style && Object.keys(style).length > 0 ? style : undefined,
       children,
@@ -182,10 +219,12 @@ export class StandardTableParser implements TableParser {
     style: TableCellStyle;
     widthPt?: number;
     colSpan?: number;
+    vMerge?: 'restart' | 'continue';
   } {
     const style: TableCellStyle = {};
     let widthPt: number | undefined;
     let colSpan: number | undefined;
+    let vMerge: 'restart' | 'continue' | undefined;
 
     for (const child of node.children) {
       const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
@@ -200,6 +239,9 @@ export class StandardTableParser implements TableParser {
         if (!Number.isNaN(spanVal) && spanVal > 1) {
           colSpan = spanVal;
         }
+      } else if (tag === 'vmerge') {
+        const vVal = (child.attributes['w:val'] ?? child.attributes['val'])?.toLowerCase();
+        vMerge = vVal === 'restart' ? 'restart' : 'continue';
       } else if (tag === 'valign') {
         const vVal = (child.attributes['w:val'] ?? child.attributes['val'])?.toLowerCase();
         if (vVal === 'top' || vVal === 'center' || vVal === 'bottom') {
@@ -237,7 +279,7 @@ export class StandardTableParser implements TableParser {
       }
     }
 
-    return { style, widthPt, colSpan };
+    return { style, widthPt, colSpan, vMerge };
   }
 }
 

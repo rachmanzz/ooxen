@@ -618,6 +618,11 @@ export class StandardWmlBuilder implements WmlBuilder {
     if (colSpan && colSpan > 1) {
       inner.push(`            <w:gridSpan w:val="${colSpan}"/>`);
     }
+    if (cell.vMerge === 'restart' || (cell.rowSpan !== undefined && cell.rowSpan > 1)) {
+      inner.push('            <w:vMerge w:val="restart"/>');
+    } else if (cell.vMerge === 'continue' || cell.rowSpan === 0) {
+      inner.push('            <w:vMerge/>');
+    }
     if (style?.backgroundColor) {
       inner.push(`            <w:shd w:fill="${cleanHexColor(style.backgroundColor)}"/>`);
     }

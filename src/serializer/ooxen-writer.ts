@@ -718,6 +718,7 @@ export class StandardOoxenWriter implements OoxenWriter {
     };
 
     findElements(tableNode);
+    this.normalizeVerticalMerges(rows);
 
     return {
       type: 'table',
@@ -725,6 +726,55 @@ export class StandardOoxenWriter implements OoxenWriter {
       columnWidthsPt,
       rows,
     };
+  }
+
+  private normalizeVerticalMerges(rows: TableRowNode[]): void {
+    const pendingMerges: Map<number, { remaining: number; cell: TableCellNode }> = new Map();
+
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r]!;
+      const newCells: TableCellNode[] = [];
+      let inputCellIdx = 0;
+      let colIdx = 0;
+
+      while (inputCellIdx < row.children.length || pendingMerges.size > 0) {
+        const pending = pendingMerges.get(colIdx);
+        if (pending && pending.remaining > 0) {
+          const span = pending.cell.colSpan ?? 1;
+          newCells.push({
+            type: 'table-cell',
+            vMerge: 'continue',
+            rowSpan: 0,
+            colSpan: pending.cell.colSpan,
+            widthPt: pending.cell.widthPt,
+            children: [],
+          });
+          pending.remaining--;
+          if (pending.remaining <= 0) {
+            for (let s = 0; s < span; s++) {
+              pendingMerges.delete(colIdx + s);
+            }
+          }
+          colIdx += span;
+        } else if (inputCellIdx < row.children.length) {
+          const cell = row.children[inputCellIdx]!;
+          inputCellIdx++;
+          const span = cell.colSpan ?? 1;
+          if (cell.rowSpan && cell.rowSpan > 1) {
+            cell.vMerge = 'restart';
+            for (let s = 0; s < span; s++) {
+              pendingMerges.set(colIdx + s, { remaining: cell.rowSpan - 1, cell });
+            }
+          }
+          newCells.push(cell);
+          colIdx += span;
+        } else {
+          break;
+        }
+      }
+
+      row.children = newCells;
+    }
   }
 
   private parseHtmlTableRow(trNode: XmlNode): TableRowNode {
@@ -772,6 +822,7 @@ export class StandardOoxenWriter implements OoxenWriter {
           type: 'table-cell',
           colSpan: colSpan && colSpan > 1 ? colSpan : undefined,
           rowSpan: rowSpan && rowSpan > 1 ? rowSpan : undefined,
+          vMerge: rowSpan && rowSpan > 1 ? 'restart' : undefined,
           widthPt,
           style: Object.keys(cellStyle).length > 0 ? cellStyle : undefined,
           children: this.parseBlockNodes(child.children),

@@ -279,7 +279,10 @@ export class StandardHtmlRenderer implements HtmlRenderer {
       styleObj['height'] = `${row.heightPt}pt`;
     }
     const styleAttr = Object.keys(styleObj).length > 0 ? ` style="${escapeXml(this.styleMapper.toCssString(styleObj))}"` : '';
-    const cellsHtml = row.children.map((cell) => this.renderTableCell(cell)).join('');
+    const cellsHtml = row.children
+      .filter((cell) => cell.vMerge !== 'continue' && cell.rowSpan !== 0)
+      .map((cell) => this.renderTableCell(cell))
+      .join('');
     return `        <tr class="ooxen-tr"${styleAttr}>${cellsHtml}</tr>`;
   }
 

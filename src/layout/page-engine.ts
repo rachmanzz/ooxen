@@ -462,6 +462,13 @@ export class StandardPageEngine implements PageEngine {
         const padRight = cell.style?.paddingRightPt ?? table.style?.cellMarginRightPt ?? 4;
         cellPaddings.push({ top: padTop, bottom: padBottom, left: padLeft, right: padRight });
 
+        // Skip layout for continuation cells in vertical merge
+        if (cell.vMerge === 'continue' || cell.rowSpan === 0) {
+          cellLinesMap.push([]);
+          cellContentHeights.push(0);
+          continue;
+        }
+
         const innerWidth = Math.max(10, cellW - padLeft - padRight);
         const cellLines: LayoutLine[] = [];
         let cellY = 0;
@@ -518,6 +525,32 @@ export class StandardPageEngine implements PageEngine {
               baseline: child.heightPt,
             });
             cellY += child.heightPt;
+          } else if (child.type === 'table') {
+            let nestedY = cellY;
+            this.layoutTable(
+              child,
+              innerWidth,
+              contentHeight,
+              { top: 0, bottom: 0, left: 0, right: 0 },
+              (nestedLine) => {
+                cellLines.push({
+                  bounds: {
+                    x: nestedLine.bounds.x,
+                    y: nestedLine.bounds.y,
+                    width: nestedLine.bounds.width,
+                    height: nestedLine.bounds.height,
+                  },
+                  fragments: nestedLine.fragments,
+                  baseline: nestedLine.baseline,
+                });
+              },
+              () => {},
+              () => nestedY,
+              (newY) => {
+                nestedY = newY;
+              },
+            );
+            cellY = nestedY;
           }
         }
 
