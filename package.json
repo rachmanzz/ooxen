@@ -1,6 +1,9 @@
 {
-  "name": "ooxen",
-  "version": "0.1.0",
+  "name": "@rahmantech/ooxen",
+  "publishConfig": {
+    "access": "public"
+  },
+  "version": "0.1.2",
   "description": "Universal bidirectional read-write-render engine for Office Open XML (OOXML)",
   "type": "module",
   "main": "./dist/index.js",
