@@ -5,7 +5,7 @@ import type { CanvasTarget } from '../renderer/canvas/canvas-target.js';
 import { defaultPageRenderer } from '../renderer/canvas/page-renderer.js';
 import { defaultHtmlRenderer } from '../renderer/html/html-renderer.js';
 import { defaultOoxenWriter } from '../serializer/ooxen-writer.js';
-import type { DocumentNode } from '../types/ast.js';
+import type { BlockNode, DocumentNode, RevisionInfo, RunNode } from '../types/ast.js';
 import type { TextStyle } from '../types/style.js';
 
 /**
@@ -49,6 +49,119 @@ export function applyStyleToParagraph(
 }
 
 /**
+ * Pure function: accepts all revisions (keeps inserts as normal runs, removes deleted runs).
+ */
+export function acceptDocumentRevisions(doc: DocumentNode): DocumentNode {
+  const transformRun = (run: RunNode): RunNode[] => {
+    if (run.revision?.type === 'delete') {
+      return [];
+    }
+    if (run.revision?.type === 'insert') {
+      const { revision: _, ...cleaned } = run;
+      return [cleaned];
+    }
+    return [run];
+  };
+
+  const transformBlock = (block: BlockNode): BlockNode => {
+    if (block.type === 'paragraph') {
+      const newRuns = block.children.flatMap(transformRun);
+      return { ...block, children: newRuns };
+    }
+    if (block.type === 'table') {
+      const newRows = block.rows.map((row) => ({
+        ...row,
+        children: row.children.map((cell) => ({
+          ...cell,
+          children: cell.children.map(transformBlock),
+        })),
+      }));
+      return { ...block, rows: newRows };
+    }
+    return block;
+  };
+
+  return {
+    ...doc,
+    sections: doc.sections.map((section) => ({
+      ...section,
+      children: section.children.map(transformBlock),
+    })),
+  };
+}
+
+/**
+ * Pure function: rejects all revisions (removes inserts, restores deleted runs as normal runs).
+ */
+export function rejectDocumentRevisions(doc: DocumentNode): DocumentNode {
+  const transformRun = (run: RunNode): RunNode[] => {
+    if (run.revision?.type === 'insert') {
+      return [];
+    }
+    if (run.revision?.type === 'delete') {
+      const { revision: _, ...cleaned } = run;
+      return [cleaned];
+    }
+    return [run];
+  };
+
+  const transformBlock = (block: BlockNode): BlockNode => {
+    if (block.type === 'paragraph') {
+      const newRuns = block.children.flatMap(transformRun);
+      return { ...block, children: newRuns };
+    }
+    if (block.type === 'table') {
+      const newRows = block.rows.map((row) => ({
+        ...row,
+        children: row.children.map((cell) => ({
+          ...cell,
+          children: cell.children.map(transformBlock),
+        })),
+      }));
+      return { ...block, rows: newRows };
+    }
+    return block;
+  };
+
+  return {
+    ...doc,
+    sections: doc.sections.map((section) => ({
+      ...section,
+      children: section.children.map(transformBlock),
+    })),
+  };
+}
+
+/**
+ * Pure function: collects all distinct revision metadata from a DocumentNode.
+ */
+export function collectDocumentRevisions(doc: DocumentNode): RevisionInfo[] {
+  const revisions: RevisionInfo[] = [];
+  const seen = new Set<string>();
+
+  const checkRun = (run: RunNode) => {
+    if (run.revision) {
+      const key = `${run.revision.type}:${run.revision.id ?? ''}:${run.revision.author ?? ''}:${run.revision.date ?? ''}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        revisions.push(run.revision);
+      }
+    }
+  };
+
+  const checkBlock = (block: BlockNode) => {
+    if (block.type === 'paragraph') {
+      block.children.forEach(checkRun);
+    } else if (block.type === 'table') {
+      block.rows.forEach((r) => r.children.forEach((c) => c.children.forEach(checkBlock)));
+    }
+  };
+
+  doc.sections.forEach((s) => s.children.forEach(checkBlock));
+  return revisions;
+}
+
+/**
  * Plain object session interface for interactive document views (Canvas, HTML, book-canvas).
  */
 export interface DocumentSession {
@@ -56,6 +169,9 @@ export interface DocumentSession {
   readonly pages: PageLayout[];
   hitTest(x: number, y: number, pageIndex?: number): HitTestResult | undefined;
   applyRangeStyle(paragraphIndex: number, start: number, end: number, patchStyle: TextStyle): DocumentSession;
+  acceptRevisions(): DocumentSession;
+  rejectRevisions(): DocumentSession;
+  getRevisions(): RevisionInfo[];
   renderPage(pageIndex: number, target: CanvasTarget): void;
   toOoxml(): Promise<Uint8Array>;
   toHtml(): string;
@@ -81,6 +197,20 @@ export function createDocumentSession(initialDoc: DocumentNode): DocumentSession
     applyRangeStyle(paragraphIndex: number, start: number, end: number, patchStyle: TextStyle): DocumentSession {
       const updatedDoc = applyStyleToParagraph(initialDoc, paragraphIndex, start, end, patchStyle);
       return createDocumentSession(updatedDoc);
+    },
+
+    acceptRevisions(): DocumentSession {
+      const acceptedDoc = acceptDocumentRevisions(initialDoc);
+      return createDocumentSession(acceptedDoc);
+    },
+
+    rejectRevisions(): DocumentSession {
+      const rejectedDoc = rejectDocumentRevisions(initialDoc);
+      return createDocumentSession(rejectedDoc);
+    },
+
+    getRevisions(): RevisionInfo[] {
+      return collectDocumentRevisions(initialDoc);
     },
 
     renderPage(pageIndex: number, target: CanvasTarget): void {

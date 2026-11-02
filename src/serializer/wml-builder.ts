@@ -220,44 +220,84 @@ export class StandardWmlBuilder implements WmlBuilder {
 
     while (i < runs.length) {
       const run = runs[i]!;
-      const hlink = run.hyperlink;
+      const rev = run.revision;
 
-      if (!hlink) {
-        pieces.push(this.serializeRun(run));
-        i++;
+      if (!rev) {
+        pieces.push(this.serializeHyperlinkOrPlainRun(runs, i, (nextI) => { i = nextI; }, hyperlinkRelIds));
       } else {
-        const group: RunNode[] = [];
-        while (i < runs.length && runs[i]!.hyperlink === hlink) {
-          group.push(runs[i]!);
+        const rGroup: RunNode[] = [];
+        while (i < runs.length && runs[i]!.revision === rev) {
+          rGroup.push(runs[i]!);
           i++;
         }
 
-        const innerRuns = group.map((r) => this.serializeRun(r)).join('\n');
-        const tooltipAttr = hlink.tooltip ? ` w:tooltip="${escapeXml(hlink.tooltip)}"` : '';
-
-        if (hlink.url) {
-          const relId = hyperlinkRelIds?.get(hlink.url) ?? 'rIdLink';
-          pieces.push(
-            [
-              `      <w:hyperlink r:id="${relId}"${tooltipAttr} w:history="1">`,
-              innerRuns,
-              '      </w:hyperlink>',
-            ].join('\n'),
-          );
-        } else if (hlink.anchor) {
-          pieces.push(
-            [
-              `      <w:hyperlink w:anchor="${escapeXml(hlink.anchor)}"${tooltipAttr} w:history="1">`,
-              innerRuns,
-              '      </w:hyperlink>',
-            ].join('\n'),
-          );
-        } else {
-          pieces.push(innerRuns);
-        }
+        const innerRuns = this.serializeRunsGroupWithoutRevision(rGroup, hyperlinkRelIds);
+        const idAttr = rev.id ? ` w:id="${escapeXml(rev.id)}"` : ' w:id="0"';
+        const authorAttr = rev.author ? ` w:author="${escapeXml(rev.author)}"` : '';
+        const dateAttr = rev.date ? ` w:date="${escapeXml(rev.date)}"` : '';
+        const tag = rev.type === 'insert' ? 'w:ins' : 'w:del';
+        pieces.push(
+          [
+            `      <${tag}${idAttr}${authorAttr}${dateAttr}>`,
+            innerRuns,
+            `      </${tag}>`,
+          ].join('\n'),
+        );
       }
     }
 
+    return pieces.filter(Boolean).join('\n');
+  }
+
+  private serializeHyperlinkOrPlainRun(
+    runs: RunNode[],
+    startIndex: number,
+    setIndex: (nextIndex: number) => void,
+    hyperlinkRelIds?: Map<string, string>,
+  ): string {
+    let i = startIndex;
+    const run = runs[i]!;
+    const hlink = run.hyperlink;
+
+    if (!hlink) {
+      setIndex(i + 1);
+      return this.serializeRun(run);
+    }
+
+    const group: RunNode[] = [];
+    while (i < runs.length && runs[i]!.hyperlink === hlink && runs[i]!.revision === run.revision) {
+      group.push(runs[i]!);
+      i++;
+    }
+    setIndex(i);
+
+    const innerRuns = group.map((r) => this.serializeRun(r)).join('\n');
+    const tooltipAttr = hlink.tooltip ? ` w:tooltip="${escapeXml(hlink.tooltip)}"` : '';
+
+    if (hlink.url) {
+      const relId = hyperlinkRelIds?.get(hlink.url) ?? 'rIdLink';
+      return [
+        `      <w:hyperlink r:id="${relId}"${tooltipAttr} w:history="1">`,
+        innerRuns,
+        '      </w:hyperlink>',
+      ].join('\n');
+    }
+    if (hlink.anchor) {
+      return [
+        `      <w:hyperlink w:anchor="${escapeXml(hlink.anchor)}"${tooltipAttr} w:history="1">`,
+        innerRuns,
+        '      </w:hyperlink>',
+      ].join('\n');
+    }
+    return innerRuns;
+  }
+
+  private serializeRunsGroupWithoutRevision(runs: RunNode[], hyperlinkRelIds?: Map<string, string>): string {
+    const pieces: string[] = [];
+    let i = 0;
+    while (i < runs.length) {
+      pieces.push(this.serializeHyperlinkOrPlainRun(runs, i, (nextI) => { i = nextI; }, hyperlinkRelIds));
+    }
     return pieces.filter(Boolean).join('\n');
   }
 
@@ -325,12 +365,13 @@ export class StandardWmlBuilder implements WmlBuilder {
 
     // Split text by newlines into text and breaks
     const parts = r.text.split('\n');
+    const textTag = r.revision?.type === 'delete' ? 'w:delText' : 'w:t';
     for (let i = 0; i < parts.length; i++) {
       const text = parts[i]!;
       if (text.length > 0) {
         const needsPreserve = text.startsWith(' ') || text.endsWith(' ') || text.includes('  ');
         const preserveAttr = needsPreserve ? ' xml:space="preserve"' : '';
-        textPieces.push(`      <w:t${preserveAttr}>${escapeXml(text)}</w:t>`);
+        textPieces.push(`      <${textTag}${preserveAttr}>${escapeXml(text)}</${textTag}>`);
       }
       if (i < parts.length - 1) {
         textPieces.push('      <w:br/>');

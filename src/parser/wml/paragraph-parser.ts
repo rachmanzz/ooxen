@@ -4,6 +4,8 @@ import type {
   HyperlinkInfo,
   ImageNode,
   ParagraphNode,
+  RevisionInfo,
+  RevisionType,
   RunNode,
 } from '../../types/ast.js';
 import { parseImageNode, type ImageResolver } from '../dml/image-parser.js';
@@ -84,6 +86,28 @@ export class StandardParagraphParser implements ParagraphParser {
       } else if (tag === 'commentrangeend') {
         const cId = child.attributes['w:id'] ?? child.attributes['id'];
         if (activeCommentId === cId || !cId) activeCommentId = undefined;
+      } else if (tag === 'ins' || tag === 'del') {
+        const revType: RevisionType = tag === 'ins' ? 'insert' : 'delete';
+        const revId = child.attributes['w:id'] ?? child.attributes['id'];
+        const revAuthor = child.attributes['w:author'] ?? child.attributes['author'];
+        const revDate = child.attributes['w:date'] ?? child.attributes['date'];
+        const revInfo: RevisionInfo = {
+          type: revType,
+          id: revId,
+          author: revAuthor,
+          date: revDate,
+        };
+
+        for (const rChild of child.children) {
+          const rTag = rChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+          if (rTag === 'r') {
+            const r = this.parseRun(rChild, styleResolver, imageResolver);
+            r.revision = revInfo;
+            if (activeBookmark && !r.bookmarkName) r.bookmarkName = activeBookmark;
+            if (activeCommentId && !r.commentId) r.commentId = activeCommentId;
+            runs.push(r);
+          }
+        }
       } else if (tag === 'hyperlink') {
         const relId = child.attributes['r:id'] ?? child.attributes['id'] ?? child.attributes['w:id'];
         const anchor = child.attributes['w:anchor'] ?? child.attributes['anchor'];
@@ -229,7 +253,7 @@ export class StandardParagraphParser implements ParagraphParser {
         if (rStyle) {
           rStyleId = rStyle.attributes['w:val'] ?? rStyle.attributes['val'];
         }
-      } else if (tag === 't') {
+      } else if (tag === 't' || tag === 'deltext') {
         text += child.textContent;
       } else if (tag === 'instrtext') {
         const instr = child.textContent.trim().toUpperCase();

@@ -87,13 +87,30 @@ export class StandardPageRenderer implements PageRenderer {
         } else if (fragment.image) {
           this.primitives.drawImage(target, fragment.image, fragX, fragY);
         } else {
+          let style = fragment.style;
+          if (fragment.revision) {
+            if (fragment.revision.type === 'delete') {
+              style = {
+                ...fragment.style,
+                strike: true,
+                color: fragment.style?.color ?? '#C00000',
+              };
+            } else if (fragment.revision.type === 'insert') {
+              style = {
+                ...fragment.style,
+                underline: true,
+                color: fragment.style?.color ?? '#008000',
+              };
+            }
+          }
+
           this.primitives.drawText(
             target,
             fragment.text,
             fragX,
             fragY,
             line.baseline,
-            fragment.style,
+            style,
           );
         }
       }

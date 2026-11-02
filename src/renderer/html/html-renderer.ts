@@ -258,6 +258,14 @@ export class StandardHtmlRenderer implements HtmlRenderer {
       outHtml = `${outHtml}<span class="ooxen-column-break" style="break-before: column;"></span>`;
     }
 
+    if (run.revision) {
+      const authorAttr = run.revision.author ? ` data-author="${escapeXml(run.revision.author)}"` : '';
+      const dateAttr = run.revision.date ? ` data-date="${escapeXml(run.revision.date)}"` : '';
+      const idAttr = run.revision.id ? ` data-id="${escapeXml(run.revision.id)}"` : '';
+      const tag = run.revision.type === 'insert' ? 'ins' : 'del';
+      outHtml = `<${tag} class="ooxen-${tag}"${idAttr}${authorAttr}${dateAttr}>${outHtml}</${tag}>`;
+    }
+
     if (run.commentId) {
       return `<mark class="ooxen-comment" data-comment-id="${escapeXml(run.commentId)}">${outHtml}</mark>`;
     }

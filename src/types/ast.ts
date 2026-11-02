@@ -77,6 +77,15 @@ export interface FootnoteReference {
   mark?: string;
 }
 
+export type RevisionType = 'insert' | 'delete';
+
+export interface RevisionInfo {
+  type: RevisionType;
+  id?: string;
+  author?: string;
+  date?: string;
+}
+
 export interface RunNode extends BaseASTNode {
   type: 'run';
   text: string;
@@ -90,6 +99,7 @@ export interface RunNode extends BaseASTNode {
   isFootnoteRefMark?: boolean;
   commentId?: string;
   breakType?: 'page' | 'column';
+  revision?: RevisionInfo;
 }
 
 export interface ParagraphNode extends BaseASTNode {

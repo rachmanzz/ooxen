@@ -13,6 +13,8 @@ import type {
   HyperlinkInfo,
   ImageNode,
   ParagraphNode,
+  RevisionInfo,
+  RevisionType,
   RunNode,
   SectionColumns,
   SectionNode,
@@ -595,6 +597,33 @@ export class StandardOoxenWriter implements OoxenWriter {
             type: 'run',
             text: child.textContent,
             commentId,
+          });
+        }
+      } else if (tag === 'ins' || tag === 'del') {
+        const revType: RevisionType = tag === 'ins' ? 'insert' : 'delete';
+        const revId = child.attributes['data-id'] ?? child.attributes['id'];
+        const revAuthor = child.attributes['data-author'] ?? child.attributes['author'];
+        const revDate = child.attributes['data-date'] ?? child.attributes['date'];
+        const revInfo: RevisionInfo = {
+          type: revType,
+          id: revId,
+          author: revAuthor,
+          date: revDate,
+        };
+
+        for (const iChild of child.children) {
+          const iTag = iChild.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+          if (iTag === 'span') {
+            const r = this.parseSpanToRun(iChild);
+            r.revision = revInfo;
+            runs.push(r);
+          }
+        }
+        if (child.children.length === 0 && child.textContent) {
+          runs.push({
+            type: 'run',
+            text: child.textContent,
+            revision: revInfo,
           });
         }
       } else if (tag === 'a') {

@@ -4,6 +4,7 @@ import type {
   HyperlinkInfo,
   ImageNode,
   ParagraphNode,
+  RevisionInfo,
   RunNode,
 } from '../types/ast.js';
 import type { Rect } from '../types/common.js';
@@ -25,6 +26,7 @@ export interface LineFragment {
   footnoteRef?: FootnoteReference;
   commentId?: string;
   breakType?: 'page' | 'column';
+  revision?: RevisionInfo;
 }
 
 export interface LayoutLine {
@@ -53,6 +55,7 @@ interface WordToken {
   footnoteRef?: FootnoteReference;
   commentId?: string;
   breakType?: 'page' | 'column';
+  revision?: RevisionInfo;
 }
 
 export class StandardLineBreaker implements LineBreaker {
@@ -208,6 +211,7 @@ export class StandardLineBreaker implements LineBreaker {
           hyperlink: run.hyperlink,
           bookmarkName: run.bookmarkName,
           commentId: run.commentId,
+          revision: run.revision,
         });
       }
 
@@ -224,6 +228,7 @@ export class StandardLineBreaker implements LineBreaker {
           hyperlink: run.hyperlink,
           bookmarkName: run.bookmarkName,
           commentId: run.commentId,
+          revision: run.revision,
         });
       }
 
@@ -234,22 +239,22 @@ export class StandardLineBreaker implements LineBreaker {
             const char = run.text[i]!;
             if (char === '\n') {
               if (currentWord.length > 0) {
-                tokens.push(this.createToken(currentWord, false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId));
+                tokens.push(this.createToken(currentWord, false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId, run.revision));
                 currentWord = '';
               }
-              tokens.push(this.createToken('\n', false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId));
+              tokens.push(this.createToken('\n', false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId, run.revision));
             } else if (char === ' ' || char === '\t') {
               if (currentWord.length > 0) {
-                tokens.push(this.createToken(currentWord, false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId));
+                tokens.push(this.createToken(currentWord, false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId, run.revision));
                 currentWord = '';
               }
-              tokens.push(this.createToken(char, true, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId));
+              tokens.push(this.createToken(char, true, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId, run.revision));
             } else {
               currentWord += char;
             }
           }
           if (currentWord.length > 0) {
-            tokens.push(this.createToken(currentWord, false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId));
+            tokens.push(this.createToken(currentWord, false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId, run.revision));
           }
         }
         tokens.push({
@@ -263,6 +268,7 @@ export class StandardLineBreaker implements LineBreaker {
           style: run.style,
           bookmarkName: run.bookmarkName,
           commentId: run.commentId,
+          revision: run.revision,
         });
         continue;
       }
@@ -276,23 +282,23 @@ export class StandardLineBreaker implements LineBreaker {
 
         if (char === '\n') {
           if (currentWord.length > 0) {
-            tokens.push(this.createToken(currentWord, false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId));
+            tokens.push(this.createToken(currentWord, false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId, run.revision));
             currentWord = '';
           }
-          tokens.push(this.createToken('\n', false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId));
+          tokens.push(this.createToken('\n', false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId, run.revision));
         } else if (char === ' ' || char === '\t') {
           if (currentWord.length > 0) {
-            tokens.push(this.createToken(currentWord, false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId));
+            tokens.push(this.createToken(currentWord, false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId, run.revision));
             currentWord = '';
           }
-          tokens.push(this.createToken(char, true, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId));
+          tokens.push(this.createToken(char, true, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId, run.revision));
         } else {
           currentWord += char;
         }
       }
 
       if (currentWord.length > 0) {
-        tokens.push(this.createToken(currentWord, false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId));
+        tokens.push(this.createToken(currentWord, false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId, run.revision));
       }
     }
 
@@ -307,6 +313,7 @@ export class StandardLineBreaker implements LineBreaker {
     bookmarkName?: string,
     footnoteRef?: FootnoteReference,
     commentId?: string,
+    revision?: RevisionInfo,
   ): WordToken {
     const m = this.metrics.measureText(text, style);
     return {
@@ -321,6 +328,7 @@ export class StandardLineBreaker implements LineBreaker {
       bookmarkName,
       footnoteRef,
       commentId,
+      revision,
     };
   }
 
@@ -397,6 +405,7 @@ export class StandardLineBreaker implements LineBreaker {
         footnoteRef: token.footnoteRef,
         commentId: token.commentId,
         breakType: token.breakType,
+        revision: token.revision,
         bounds: {
           x: currentX,
           y: maxAscent - token.ascent, // baseline alignment
