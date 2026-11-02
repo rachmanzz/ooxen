@@ -29,6 +29,7 @@ export * from './parser/dml/shape-parser.js';
 export * from './layout/page-engine.js';
 export * from './layout/line-breaker.js';
 export * from './layout/text-metrics.js';
+export * from './layout/range-slicer.js';
 
 // Renderer (Canvas & HTML)
 export * from './renderer/canvas/canvas-target.js';
