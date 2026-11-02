@@ -143,12 +143,26 @@ export interface SectionFooters {
   even?: HeaderFooterNode;
 }
 
+export interface ColumnProperties {
+  widthPt: number;
+  spacePt?: number;
+}
+
+export interface SectionColumns {
+  count: number; // number of columns (default: 1)
+  spacePt?: number; // spacing between equal-width columns in points (default: 36 pt / 720 twips)
+  equalWidth?: boolean; // default: true
+  separator?: boolean; // vertical separator line between columns
+  columns?: ColumnProperties[]; // explicit column definitions when not equal width
+}
+
 export interface SectionProperties {
   pageSize: Size; // points
   margins: Margins; // points
   headerDistancePt?: number; // distance from top of page to header (default: 36 pt / 720 twips)
   footerDistancePt?: number; // distance from bottom of page to footer (default: 36 pt / 720 twips)
   titlePg?: boolean; // whether first page has different header/footer
+  columns?: SectionColumns;
 }
 
 export interface SectionNode extends BaseASTNode {

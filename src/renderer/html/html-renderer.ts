@@ -145,13 +145,21 @@ export class StandardHtmlRenderer implements HtmlRenderer {
   }
 
   private renderSection(section: SectionNode): string {
-    const { pageSize, margins } = section.properties;
+    const { pageSize, margins, columns } = section.properties;
     const styleObj: Record<string, string> = {
       width: `${pageSize.width}pt`,
       'min-height': `${pageSize.height}pt`,
       padding: `${margins.top}pt ${margins.right}pt ${margins.bottom}pt ${margins.left}pt`,
       'box-sizing': 'border-box',
     };
+
+    if (columns && columns.count > 1) {
+      styleObj['column-count'] = String(columns.count);
+      styleObj['column-gap'] = `${columns.spacePt ?? 36}pt`;
+      if (columns.separator) {
+        styleObj['column-rule'] = '1px solid #CCCCCC';
+      }
+    }
 
     const styleStr = this.styleMapper.toCssString(styleObj);
 

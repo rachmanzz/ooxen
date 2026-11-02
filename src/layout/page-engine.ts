@@ -36,9 +36,42 @@ export class StandardPageEngine implements PageEngine {
       const contentWidth = Math.max(50, pageSize.width - margins.left - margins.right);
       const contentHeight = Math.max(50, pageSize.height - margins.top - margins.bottom);
 
+      // Multi-column setup (w:cols)
+      const columnsProp = section.properties.columns;
+      const colCount = Math.max(1, columnsProp?.count ?? 1);
+      const defaultSpacePt = columnsProp?.spacePt ?? 36;
+
+      const columnWidths: number[] = [];
+      const columnStartX: number[] = [];
+
+      if (colCount > 1) {
+        if (columnsProp?.equalWidth !== false || !columnsProp?.columns || columnsProp.columns.length === 0) {
+          const totalSpace = (colCount - 1) * defaultSpacePt;
+          const colWidth = Math.max(20, (contentWidth - totalSpace) / colCount);
+          for (let c = 0; c < colCount; c++) {
+            columnWidths.push(colWidth);
+            columnStartX.push(margins.left + c * (colWidth + defaultSpacePt));
+          }
+        } else {
+          let curX = margins.left;
+          for (let c = 0; c < colCount; c++) {
+            const colDef = columnsProp.columns[c];
+            const w = colDef?.widthPt ?? contentWidth / colCount;
+            const s = colDef?.spacePt ?? defaultSpacePt;
+            columnWidths.push(w);
+            columnStartX.push(curX);
+            curX += w + s;
+          }
+        }
+      } else {
+        columnWidths.push(contentWidth);
+        columnStartX.push(margins.left);
+      }
+
       let currentPageIndex = pages.length;
       let sectionPageIndex = 0;
       let currentLines: LayoutLine[] = [];
+      let currentColumnIndex = 0;
       let currentY = 0; // vertical position inside content box (0 to contentHeight)
 
       const emitPage = (): void => {
@@ -53,21 +86,49 @@ export class StandardPageEngine implements PageEngine {
         sectionPageIndex++;
         currentPageIndex++;
         currentLines = [];
+        currentColumnIndex = 0;
         currentY = 0;
+      };
+
+      const onColumnOrPageOverflow = (): void => {
+        if (currentColumnIndex < colCount - 1) {
+          currentColumnIndex++;
+          currentY = 0;
+        } else {
+          emitPage();
+        }
+      };
+
+      const getActiveColWidth = (): number => columnWidths[currentColumnIndex] ?? contentWidth;
+      const getActiveColStartX = (): number => columnStartX[currentColumnIndex] ?? margins.left;
+
+      const dynamicMargins: Margins = {
+        get top() {
+          return margins.top;
+        },
+        get bottom() {
+          return margins.bottom;
+        },
+        get right() {
+          return margins.right;
+        },
+        get left() {
+          return getActiveColStartX();
+        },
       };
 
       for (const block of section.children) {
         if (block.type === 'paragraph') {
           this.layoutParagraph(
             block,
-            contentWidth,
+            getActiveColWidth(),
             contentHeight,
-            margins,
+            dynamicMargins,
             (line) => {
               currentLines.push(line);
             },
             () => {
-              emitPage();
+              onColumnOrPageOverflow();
             },
             () => currentY,
             (newY) => {
@@ -77,14 +138,14 @@ export class StandardPageEngine implements PageEngine {
         } else if (block.type === 'table') {
           this.layoutTable(
             block,
-            contentWidth,
+            getActiveColWidth(),
             contentHeight,
-            margins,
+            dynamicMargins,
             (line) => {
               currentLines.push(line);
             },
             () => {
-              emitPage();
+              onColumnOrPageOverflow();
             },
             () => currentY,
             (newY) => {
@@ -92,12 +153,12 @@ export class StandardPageEngine implements PageEngine {
             },
           );
         } else if (block.type === 'drawing') {
-          if (currentY + block.heightPt > contentHeight && currentLines.length > 0) {
-            emitPage();
+          if (currentY + block.heightPt > contentHeight && (currentLines.length > 0 || currentColumnIndex > 0)) {
+            onColumnOrPageOverflow();
           }
           currentLines.push({
             bounds: {
-              x: margins.left,
+              x: getActiveColStartX(),
               y: margins.top + currentY,
               width: block.widthPt,
               height: block.heightPt,
@@ -113,12 +174,12 @@ export class StandardPageEngine implements PageEngine {
           });
           currentY += block.heightPt;
         } else if (block.type === 'image') {
-          if (currentY + block.heightPt > contentHeight && currentLines.length > 0) {
-            emitPage();
+          if (currentY + block.heightPt > contentHeight && (currentLines.length > 0 || currentColumnIndex > 0)) {
+            onColumnOrPageOverflow();
           }
           currentLines.push({
             bounds: {
-              x: margins.left,
+              x: getActiveColStartX(),
               y: margins.top + currentY,
               width: block.widthPt,
               height: block.heightPt,

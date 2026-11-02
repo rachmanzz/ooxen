@@ -1,5 +1,6 @@
 import type {
   BlockNode,
+  ColumnProperties,
   DocumentMetadata,
   DocumentNode,
   FootnoteNode,
@@ -125,6 +126,39 @@ export function parseSectionProperties(node?: XmlNode): SectionProperties {
       if (footer) props.footerDistancePt = twipsToPt(Number(footer));
     } else if (tag === 'titlepg') {
       props.titlePg = true;
+    } else if (tag === 'cols') {
+      const numAttr = child.attributes['w:num'] ?? child.attributes['num'];
+      const spaceAttr = child.attributes['w:space'] ?? child.attributes['space'];
+      const equalWidthAttr = child.attributes['w:equalWidth'] ?? child.attributes['equalWidth'];
+      const sepAttr = child.attributes['w:sep'] ?? child.attributes['sep'];
+
+      const count = numAttr ? Number(numAttr) : 1;
+      const spacePt = spaceAttr ? twipsToPt(Number(spaceAttr)) : 36;
+      const equalWidth = equalWidthAttr !== undefined ? !(equalWidthAttr === '0' || equalWidthAttr === 'false') : true;
+      const separator = sepAttr === '1' || sepAttr === 'true';
+
+      const colDefs: ColumnProperties[] = [];
+      for (const colChild of child.children) {
+        const colTag = colChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+        if (colTag === 'col') {
+          const colW = colChild.attributes['w:w'] ?? colChild.attributes['w'];
+          const colSpace = colChild.attributes['w:space'] ?? colChild.attributes['space'];
+          if (colW) {
+            colDefs.push({
+              widthPt: twipsToPt(Number(colW)),
+              spacePt: colSpace ? twipsToPt(Number(colSpace)) : undefined,
+            });
+          }
+        }
+      }
+
+      props.columns = {
+        count: Math.max(1, count),
+        spacePt,
+        equalWidth,
+        separator: separator || undefined,
+        columns: colDefs.length > 0 ? colDefs : undefined,
+      };
     }
   }
 

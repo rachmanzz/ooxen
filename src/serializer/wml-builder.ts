@@ -708,6 +708,29 @@ export class StandardWmlBuilder implements WmlBuilder {
       refs.push(`${indent}  <w:footerReference w:type="even" r:id="${headerFooterRelIds.get(section.footers.even)}"/>`);
     }
 
+    let colsXml = '';
+    const cols = section.properties.columns;
+    if (cols && cols.count > 1) {
+      const spaceTwips = Math.round(ptToTwips(cols.spacePt ?? 36));
+      const eqAttr = cols.equalWidth === false ? ' w:equalWidth="0"' : '';
+      const sepAttr = cols.separator ? ' w:sep="1"' : '';
+
+      if (cols.columns && cols.columns.length > 0) {
+        const colElements = cols.columns
+          .map((c) => {
+            const wT = Math.round(ptToTwips(c.widthPt));
+            const sT = c.spacePt !== undefined ? ` w:space="${Math.round(ptToTwips(c.spacePt))}"` : '';
+            return `${indent}    <w:col w:w="${wT}"${sT}/>`;
+          })
+          .join('\n');
+        colsXml = `${indent}  <w:cols w:num="${cols.count}" w:space="${spaceTwips}"${eqAttr}${sepAttr}>\n${colElements}\n${indent}  </w:cols>`;
+      } else {
+        colsXml = `${indent}  <w:cols w:num="${cols.count}" w:space="${spaceTwips}"${eqAttr}${sepAttr}/>`;
+      }
+    } else {
+      colsXml = `${indent}  <w:cols w:space="720"/>`;
+    }
+
     const titlePgXml = section.properties.titlePg || section.headers?.first || section.footers?.first
       ? `${indent}  <w:titlePg/>`
       : '';
@@ -717,6 +740,7 @@ export class StandardWmlBuilder implements WmlBuilder {
       ...refs,
       `${indent}  <w:pgSz w:w="${wTwips}" w:h="${hTwips}"/>`,
       `${indent}  <w:pgMar w:top="${topTwips}" w:right="${rightTwips}" w:bottom="${bottomTwips}" w:left="${leftTwips}" w:header="${headerTwips}" w:footer="${footerTwips}"/>`,
+      colsXml,
       titlePgXml,
       `${indent}</w:sectPr>`,
     ].filter(Boolean).join('\n');

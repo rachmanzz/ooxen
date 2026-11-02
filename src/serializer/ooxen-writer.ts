@@ -13,6 +13,7 @@ import type {
   ImageNode,
   ParagraphNode,
   RunNode,
+  SectionColumns,
   SectionNode,
   TableCellNode,
   TableNode,
@@ -325,10 +326,10 @@ export class StandardOoxenWriter implements OoxenWriter {
 
     if (sectionNodes.length === 0) {
       // Fallback: entire container is one section
-      sections.push(this.parseSectionFromHtmlNodes(container.children));
+      sections.push(this.parseSectionFromHtmlNodes(container.children, container));
     } else {
       for (const sNode of sectionNodes) {
-        sections.push(this.parseSectionFromHtmlNodes(sNode.children));
+        sections.push(this.parseSectionFromHtmlNodes(sNode.children, sNode));
       }
     }
 
@@ -341,7 +342,7 @@ export class StandardOoxenWriter implements OoxenWriter {
     };
   }
 
-  private parseSectionFromHtmlNodes(nodes: XmlNode[]): SectionNode {
+  private parseSectionFromHtmlNodes(nodes: XmlNode[], sectionNode?: XmlNode): SectionNode {
     let headerNode: HeaderFooterNode | undefined;
     let footerNode: HeaderFooterNode | undefined;
     const bodyNodes: XmlNode[] = [];
@@ -368,11 +369,30 @@ export class StandardOoxenWriter implements OoxenWriter {
       }
     }
 
+    const css = sectionNode ? this.parseCssStyle(sectionNode.attributes['style']) : {};
+    let columns: SectionColumns | undefined;
+    if (css['column-count']) {
+      const count = Number(css['column-count']);
+      if (!Number.isNaN(count) && count > 1) {
+        let spacePt = 36;
+        if (css['column-gap']?.endsWith('pt')) {
+          spacePt = Number.parseFloat(css['column-gap']);
+        }
+        const separator = css['column-rule'] && css['column-rule'] !== 'none';
+        columns = {
+          count,
+          spacePt,
+          separator: separator ? true : undefined,
+        };
+      }
+    }
+
     return {
       type: 'section',
       properties: {
         pageSize: { width: 612, height: 792 },
         margins: { top: 72, right: 72, bottom: 72, left: 72 },
+        columns,
       },
       children: this.parseBlockNodes(bodyNodes),
       headers: headerNode ? { default: headerNode } : undefined,
