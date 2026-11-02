@@ -111,7 +111,21 @@ export class StandardHtmlRenderer implements HtmlRenderer {
       }
     }
 
-    const articleHtml = `<article class="ooxen-document" xmlns="http://www.w3.org/1999/xhtml">\n${sectionsHtml}${footnotesHtml}${endnotesHtml}\n</article>`;
+    let commentsHtml = '';
+    if (document.comments && document.comments.length > 0) {
+      const items = document.comments
+        .map((c) => {
+          const authorAttr = c.author ? ` data-author="${escapeXml(c.author)}"` : '';
+          const dateAttr = c.date ? ` data-date="${escapeXml(c.date)}"` : '';
+          const initialsAttr = c.initials ? ` data-initials="${escapeXml(c.initials)}"` : '';
+          const inner = c.children.map((b) => this.renderBlock(b)).join('\n');
+          return `      <div class="ooxen-comment-card" id="comment-${escapeXml(c.id)}"${authorAttr}${dateAttr}${initialsAttr}>\n${inner}\n      </div>`;
+        })
+        .join('\n');
+      commentsHtml = `\n    <aside class="ooxen-comments">\n${items}\n    </aside>`;
+    }
+
+    const articleHtml = `<article class="ooxen-document" xmlns="http://www.w3.org/1999/xhtml">\n${sectionsHtml}${footnotesHtml}${endnotesHtml}${commentsHtml}\n</article>`;
 
     if (!document.metadata) {
       return articleHtml;
@@ -221,24 +235,28 @@ export class StandardHtmlRenderer implements HtmlRenderer {
 
     const spanHtml = `<span class="ooxen-r${fieldClass}"${idAttr}${styleAttr}>${escaped}${shapeSvg}${imageHtml}</span>`;
 
+    let outHtml = spanHtml;
+
     if (run.footnoteRef) {
       const refKind = run.footnoteRef.kind;
       const prefix = refKind === 'footnote' ? 'fn' : 'en';
       const mark = run.footnoteRef.mark ?? run.footnoteRef.id;
-      return `<sup class="ooxen-${refKind}-ref"><a href="#${prefix}-${run.footnoteRef.id}">[${mark}]</a></sup>`;
-    }
-
-    if (run.hyperlink) {
+      outHtml = `<sup class="ooxen-${refKind}-ref"><a href="#${prefix}-${run.footnoteRef.id}">[${mark}]</a></sup>`;
+    } else if (run.hyperlink) {
       const href = run.hyperlink.url
         ? ` href="${escapeXml(run.hyperlink.url)}"`
         : run.hyperlink.anchor
           ? ` href="#${escapeXml(run.hyperlink.anchor)}"`
           : '';
       const title = run.hyperlink.tooltip ? ` title="${escapeXml(run.hyperlink.tooltip)}"` : '';
-      return `<a class="ooxen-link"${href}${title}>${spanHtml}</a>`;
+      outHtml = `<a class="ooxen-link"${href}${title}>${spanHtml}</a>`;
     }
 
-    return spanHtml;
+    if (run.commentId) {
+      return `<mark class="ooxen-comment" data-comment-id="${escapeXml(run.commentId)}">${outHtml}</mark>`;
+    }
+
+    return outHtml;
   }
 
   private renderTable(table: TableNode): string {

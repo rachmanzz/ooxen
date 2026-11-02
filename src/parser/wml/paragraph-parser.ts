@@ -58,6 +58,7 @@ export class StandardParagraphParser implements ParagraphParser {
     let directPPrNode: XmlNode | undefined;
     let bookmarkName: string | undefined;
     let activeBookmark: string | undefined;
+    let activeCommentId: string | undefined;
     const runs: RunNode[] = [];
 
     for (const child of node.children) {
@@ -77,6 +78,12 @@ export class StandardParagraphParser implements ParagraphParser {
         }
       } else if (tag === 'bookmarkend') {
         activeBookmark = undefined;
+      } else if (tag === 'commentrangestart') {
+        const cId = child.attributes['w:id'] ?? child.attributes['id'];
+        if (cId) activeCommentId = cId;
+      } else if (tag === 'commentrangeend') {
+        const cId = child.attributes['w:id'] ?? child.attributes['id'];
+        if (activeCommentId === cId || !cId) activeCommentId = undefined;
       } else if (tag === 'hyperlink') {
         const relId = child.attributes['r:id'] ?? child.attributes['id'] ?? child.attributes['w:id'];
         const anchor = child.attributes['w:anchor'] ?? child.attributes['anchor'];
@@ -94,7 +101,11 @@ export class StandardParagraphParser implements ParagraphParser {
             const r = this.parseRun(hChild, styleResolver, imageResolver);
             r.hyperlink = hyperlinkInfo;
             if (activeBookmark && !r.bookmarkName) r.bookmarkName = activeBookmark;
-            runs.push(r);
+            if (activeCommentId && !r.commentId) r.commentId = activeCommentId;
+            const isPureCommentRef = r.commentId && !r.text && !r.drawing && !r.image && !r.footnoteRef && !r.field;
+            if (!isPureCommentRef || !runs.some((prev) => prev.commentId === r.commentId)) {
+              runs.push(r);
+            }
           } else if (hTag === 'fldsimple') {
             const instr = (hChild.attributes['w:instr'] ?? hChild.attributes['instr'] ?? '').trim();
             const fieldType = instr.toUpperCase().startsWith('PAGE')
@@ -108,7 +119,11 @@ export class StandardParagraphParser implements ParagraphParser {
                 r.field = fieldType;
                 r.hyperlink = hyperlinkInfo;
                 if (activeBookmark && !r.bookmarkName) r.bookmarkName = activeBookmark;
-                runs.push(r);
+                if (activeCommentId && !r.commentId) r.commentId = activeCommentId;
+                const isPureCommentRef = r.commentId && !r.text && !r.drawing && !r.image && !r.footnoteRef && !r.field;
+                if (!isPureCommentRef || !runs.some((prev) => prev.commentId === r.commentId)) {
+                  runs.push(r);
+                }
               }
             }
           }
@@ -116,7 +131,11 @@ export class StandardParagraphParser implements ParagraphParser {
       } else if (tag === 'r') {
         const r = this.parseRun(child, styleResolver, imageResolver);
         if (activeBookmark && !r.bookmarkName) r.bookmarkName = activeBookmark;
-        runs.push(r);
+        if (activeCommentId && !r.commentId) r.commentId = activeCommentId;
+        const isPureCommentRef = r.commentId && !r.text && !r.drawing && !r.image && !r.footnoteRef && !r.field;
+        if (!isPureCommentRef || !runs.some((prev) => prev.commentId === r.commentId)) {
+          runs.push(r);
+        }
       } else if (tag === 'fldsimple') {
         const instr = (child.attributes['w:instr'] ?? child.attributes['instr'] ?? '').trim();
         const fieldType = instr.toUpperCase().startsWith('PAGE')
@@ -129,6 +148,7 @@ export class StandardParagraphParser implements ParagraphParser {
             const r = this.parseRun(fChild, styleResolver, imageResolver);
             r.field = fieldType;
             if (activeBookmark && !r.bookmarkName) r.bookmarkName = activeBookmark;
+            if (activeCommentId && !r.commentId) r.commentId = activeCommentId;
             runs.push(r);
           }
         }
@@ -197,6 +217,7 @@ export class StandardParagraphParser implements ParagraphParser {
     let field: string | undefined;
     let footnoteRef: FootnoteReference | undefined;
     let isFootnoteRefMark: boolean | undefined;
+    let commentId: string | undefined;
 
     for (const child of node.children) {
       const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
@@ -234,6 +255,11 @@ export class StandardParagraphParser implements ParagraphParser {
         if (!text) text = `[${id}]`;
       } else if (tag === 'footnoteref' || tag === 'endnoteref') {
         isFootnoteRefMark = true;
+      } else if (tag === 'commentreference') {
+        const idStr = child.attributes['w:id'] ?? child.attributes['id'];
+        if (idStr) {
+          commentId = idStr;
+        }
       } else if (tag === 'drawing' || tag === 'pict') {
         const parsedImage = parseImageNode(child, imageResolver);
         if (parsedImage) {
@@ -260,6 +286,7 @@ export class StandardParagraphParser implements ParagraphParser {
       field,
       footnoteRef,
       isFootnoteRefMark,
+      commentId,
     };
   }
 }

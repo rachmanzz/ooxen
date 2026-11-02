@@ -27,6 +27,7 @@ export const KNOWN_RELATIONSHIPS = {
   EXTENDED_PROPERTIES: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties',
   FOOTNOTES: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes',
   ENDNOTES: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes',
+  COMMENTS: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments',
 } as const;
 
 export function getRelationshipsPath(partPath?: string): string {

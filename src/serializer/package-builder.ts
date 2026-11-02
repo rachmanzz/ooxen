@@ -1,7 +1,8 @@
 import { KNOWN_CONTENT_TYPES } from '../opc/content-types.js';
 import { createPackage, type OpcPackage } from '../opc/package.js';
 import { KNOWN_RELATIONSHIPS, type OpcRelationship } from '../opc/relationships.js';
-import type { DocumentMetadata, FootnoteNode } from '../types/ast.js';
+import type { CommentNode, DocumentMetadata, FootnoteNode } from '../types/ast.js';
+import { defaultCommentBuilder, type CommentBuilder } from './comment-builder.js';
 import { defaultFootnoteBuilder, type FootnoteBuilder } from './footnote-builder.js';
 import { defaultMetadataBuilder, type MetadataBuilder } from './metadata-builder.js';
 import { defaultNumberingBuilder, type NumberingBuilder } from './numbering-builder.js';
@@ -40,6 +41,8 @@ export interface PackageBuilder {
     endnotes?: FootnoteNode[],
     customFootnotesXml?: string,
     customEndnotesXml?: string,
+    comments?: CommentNode[],
+    customCommentsXml?: string,
   ): OpcPackage;
 }
 
@@ -48,17 +51,20 @@ export class StandardPackageBuilder implements PackageBuilder {
   private numberingBuilder: NumberingBuilder;
   private metadataBuilder: MetadataBuilder;
   private footnoteBuilder: FootnoteBuilder;
+  private commentBuilder: CommentBuilder;
 
   constructor(
     stylesBuilder: StylesBuilder = defaultStylesBuilder,
     numberingBuilder: NumberingBuilder = defaultNumberingBuilder,
     metadataBuilder: MetadataBuilder = defaultMetadataBuilder,
     footnoteBuilder: FootnoteBuilder = defaultFootnoteBuilder,
+    commentBuilder: CommentBuilder = defaultCommentBuilder,
   ) {
     this.stylesBuilder = stylesBuilder;
     this.numberingBuilder = numberingBuilder;
     this.metadataBuilder = metadataBuilder;
     this.footnoteBuilder = footnoteBuilder;
+    this.commentBuilder = commentBuilder;
   }
 
   assemblePackage(
@@ -73,6 +79,8 @@ export class StandardPackageBuilder implements PackageBuilder {
     endnotes?: FootnoteNode[],
     customFootnotesXml?: string,
     customEndnotesXml?: string,
+    comments?: CommentNode[],
+    customCommentsXml?: string,
   ): OpcPackage {
     const pkg = createPackage();
 
@@ -211,6 +219,21 @@ export class StandardPackageBuilder implements PackageBuilder {
         name: 'docProps/app.xml',
         contentType: KNOWN_CONTENT_TYPES.EXTENDED_PROPERTIES,
         data: textEncoder.encode(appXml),
+      });
+    }
+
+    // 11. Add comments if provided or custom XML provided
+    if (customCommentsXml || (comments && comments.length > 0)) {
+      const cXml = customCommentsXml ?? this.commentBuilder.buildCommentsXml(comments ?? []);
+      pkg.addRelationship('word/document.xml', {
+        id: 'rIdComments',
+        type: KNOWN_RELATIONSHIPS.COMMENTS,
+        target: 'comments.xml',
+      });
+      pkg.setPart({
+        name: 'word/comments.xml',
+        contentType: KNOWN_CONTENT_TYPES.WML_COMMENTS,
+        data: textEncoder.encode(cXml),
       });
     }
 

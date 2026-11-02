@@ -4,6 +4,7 @@ import { generatePresetGeometry, parseSvgPathToCommands } from '../parser/dml/sh
 import { defaultXmlAdapter, type XmlAdapter, type XmlNode } from '../parser/xml-adapter.js';
 import type {
   BlockNode,
+  CommentNode,
   DocumentMetadata,
   DocumentNode,
   DrawingShapeNode,
@@ -177,6 +178,9 @@ export class StandardOoxenWriter implements OoxenWriter {
       document.metadata,
       document.footnotes,
       document.endnotes,
+      undefined,
+      undefined,
+      document.comments,
     );
     return pkg.serialize();
   }
@@ -307,6 +311,7 @@ export class StandardOoxenWriter implements OoxenWriter {
   private parseHtmlToAst(rootNode: XmlNode): DocumentNode {
     const metadata = this.extractMetadataFromHtml(rootNode);
     const { footnotes, endnotes } = this.extractFootnotesFromHtml(rootNode);
+    const comments = this.extractCommentsFromHtml(rootNode);
 
     let container = rootNode;
     const bodyNode = this.findFirstNode(rootNode, (n) => {
@@ -339,7 +344,45 @@ export class StandardOoxenWriter implements OoxenWriter {
       metadata,
       footnotes,
       endnotes,
+      comments,
     };
+  }
+
+  private extractCommentsFromHtml(rootNode: XmlNode): CommentNode[] | undefined {
+    const aside = this.findFirstNode(
+      rootNode,
+      (n) =>
+        n.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '') === 'aside' &&
+        (n.attributes['class'] ?? '').includes('ooxen-comments'),
+    );
+    if (!aside) return undefined;
+
+    const comments: CommentNode[] = [];
+    for (const card of aside.children) {
+      const cardTag = card.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+      if (cardTag === 'div') {
+        const id = (card.attributes['id'] ?? '').replace(/^comment-/, '');
+        const author = card.attributes['data-author'];
+        const date = card.attributes['data-date'];
+        const initials = card.attributes['data-initials'];
+
+        const bodyChildren = card.children.filter((c) => {
+          const cTag = c.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+          return cTag === 'p' || cTag === 'div' || cTag === 'table';
+        });
+
+        comments.push({
+          type: 'comment',
+          id: id || '1',
+          author,
+          date,
+          initials,
+          children: this.parseBlockNodes(bodyChildren.length > 0 ? bodyChildren : card.children),
+        });
+      }
+    }
+
+    return comments.length > 0 ? comments : undefined;
   }
 
   private parseSectionFromHtmlNodes(nodes: XmlNode[], sectionNode?: XmlNode): SectionNode {
@@ -528,6 +571,23 @@ export class StandardOoxenWriter implements OoxenWriter {
       const tag = child.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
       if (tag === 'span') {
         runs.push(this.parseSpanToRun(child));
+      } else if (tag === 'mark') {
+        const commentId = child.attributes['data-comment-id'];
+        for (const mChild of child.children) {
+          const mTag = mChild.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+          if (mTag === 'span') {
+            const r = this.parseSpanToRun(mChild);
+            r.commentId = commentId;
+            runs.push(r);
+          }
+        }
+        if (child.children.length === 0 && child.textContent) {
+          runs.push({
+            type: 'run',
+            text: child.textContent,
+            commentId,
+          });
+        }
       } else if (tag === 'a') {
         const href = child.attributes['href'];
         const title = child.attributes['title'];

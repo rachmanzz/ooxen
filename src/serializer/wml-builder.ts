@@ -13,7 +13,7 @@ import type {
 import { ptToEmu, ptToTwips } from '../types/common.js';
 import type { ParagraphStyle, TableStyle, TextStyle } from '../types/style.js';
 
-function escapeXml(text: string): string {
+export function escapeXml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -169,6 +169,56 @@ export class StandardWmlBuilder implements WmlBuilder {
     let i = 0;
 
     while (i < runs.length) {
+      const currentCid = runs[i]!.commentId;
+      const cGroup: RunNode[] = [];
+      while (i < runs.length && runs[i]!.commentId === currentCid) {
+        cGroup.push(runs[i]!);
+        i++;
+      }
+
+      const inner = this.serializeRunsGroup(cGroup, hyperlinkRelIds);
+      if (currentCid) {
+        pieces.push(
+          [
+            `      <w:commentRangeStart w:id="${escapeXml(currentCid)}"/>`,
+            inner,
+            `      <w:commentRangeEnd w:id="${escapeXml(currentCid)}"/>`,
+            '      <w:r>',
+            '        <w:rPr>',
+            '          <w:rStyle w:val="CommentReference"/>',
+            '        </w:rPr>',
+            `        <w:commentReference w:id="${escapeXml(currentCid)}"/>`,
+            '      </w:r>',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        );
+      } else if (inner) {
+        pieces.push(inner);
+      }
+    }
+
+    let content = pieces.filter(Boolean).join('\n');
+
+    if (p.bookmarkName) {
+      const bmId = Math.abs(this.hashCode(p.bookmarkName)) % 100000;
+      content = [
+        `      <w:bookmarkStart w:id="${bmId}" w:name="${escapeXml(p.bookmarkName)}"/>`,
+        content,
+        `      <w:bookmarkEnd w:id="${bmId}"/>`,
+      ]
+        .filter(Boolean)
+        .join('\n');
+    }
+
+    return content;
+  }
+
+  private serializeRunsGroup(runs: RunNode[], hyperlinkRelIds?: Map<string, string>): string {
+    const pieces: string[] = [];
+    let i = 0;
+
+    while (i < runs.length) {
       const run = runs[i]!;
       const hlink = run.hyperlink;
 
@@ -208,20 +258,7 @@ export class StandardWmlBuilder implements WmlBuilder {
       }
     }
 
-    let content = pieces.filter(Boolean).join('\n');
-
-    if (p.bookmarkName) {
-      const bmId = Math.abs(this.hashCode(p.bookmarkName)) % 100000;
-      content = [
-        `      <w:bookmarkStart w:id="${bmId}" w:name="${escapeXml(p.bookmarkName)}"/>`,
-        content,
-        `      <w:bookmarkEnd w:id="${bmId}"/>`,
-      ]
-        .filter(Boolean)
-        .join('\n');
-    }
-
-    return content;
+    return pieces.filter(Boolean).join('\n');
   }
 
   private hashCode(str: string): number {

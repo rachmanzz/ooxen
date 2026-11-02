@@ -13,6 +13,7 @@ export interface HitTestResult {
   charAt?: string;
   hyperlink?: HyperlinkInfo;
   bookmarkName?: string;
+  commentId?: string;
 }
 
 /**
@@ -113,5 +114,6 @@ export function hitTestPage(page: PageLayout, x: number, y: number): HitTestResu
     charAt,
     hyperlink: fragment.hyperlink,
     bookmarkName: fragment.bookmarkName,
+    commentId: fragment.commentId,
   };
 }

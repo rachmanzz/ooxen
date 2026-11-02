@@ -1,6 +1,7 @@
 import type {
   BlockNode,
   ColumnProperties,
+  CommentNode,
   DocumentMetadata,
   DocumentNode,
   FootnoteNode,
@@ -17,6 +18,7 @@ import { KNOWN_RELATIONSHIPS } from '../../opc/relationships.js';
 import { parsePackageMetadata } from '../metadata/metadata-parser.js';
 import { defaultXmlAdapter, type XmlNode } from '../xml-adapter.js';
 import type { ImageResolver } from '../dml/image-parser.js';
+import { parseCommentsXml } from './comment-parser.js';
 import { parseEndnotesXml, parseFootnotesXml } from './footnote-parser.js';
 import { parseHeaderFooterNode, type HeaderFooterResolver } from './header-footer-parser.js';
 import { StandardNumberingResolver, type NumberingResolver } from './numbering-resolver.js';
@@ -39,6 +41,7 @@ export interface DocumentParser {
     metadata?: DocumentMetadata,
     footnotes?: FootnoteNode[],
     endnotes?: FootnoteNode[],
+    comments?: CommentNode[],
   ): DocumentNode;
   parseDocumentXml(
     xmlString: string,
@@ -50,6 +53,7 @@ export interface DocumentParser {
     metadata?: DocumentMetadata,
     footnotes?: FootnoteNode[],
     endnotes?: FootnoteNode[],
+    comments?: CommentNode[],
   ): DocumentNode;
   parsePackage(pkg: OpcPackage): DocumentNode;
 }
@@ -187,6 +191,7 @@ export class StandardDocumentParser implements DocumentParser {
     metadata?: DocumentMetadata,
     footnotes?: FootnoteNode[],
     endnotes?: FootnoteNode[],
+    comments?: CommentNode[],
   ): DocumentNode {
     const rootNode = defaultXmlAdapter.parse(xmlString);
     return this.parseDocument(
@@ -199,6 +204,7 @@ export class StandardDocumentParser implements DocumentParser {
       metadata,
       footnotes,
       endnotes,
+      comments,
     );
   }
 
@@ -212,6 +218,7 @@ export class StandardDocumentParser implements DocumentParser {
     metadata?: DocumentMetadata,
     footnotes?: FootnoteNode[],
     endnotes?: FootnoteNode[],
+    comments?: CommentNode[],
   ): DocumentNode {
     // Find w:body
     let bodyNode: XmlNode | undefined;
@@ -234,6 +241,7 @@ export class StandardDocumentParser implements DocumentParser {
         metadata,
         footnotes,
         endnotes,
+        comments,
       };
     }
 
@@ -299,6 +307,7 @@ export class StandardDocumentParser implements DocumentParser {
       metadata,
       footnotes,
       endnotes,
+      comments,
     };
   }
 
@@ -429,10 +438,25 @@ export class StandardDocumentParser implements DocumentParser {
       );
     }
 
-    // 8. Resolve metadata
+    // 8. Resolve comments
+    let comments: CommentNode[] | undefined;
+    const comRel = docRels.find((r) => r.type === KNOWN_RELATIONSHIPS.COMMENTS);
+    const comPath = comRel ? `word/${comRel.target.replace(/^\/+/, '')}` : 'word/comments.xml';
+    const comPart = pkg.getPart(comPath);
+    if (comPart) {
+      comments = parseCommentsXml(
+        textDecoder.decode(comPart.data),
+        styleResolver,
+        numberingResolver,
+        imageResolver,
+        hyperlinkResolver,
+      );
+    }
+
+    // 9. Resolve metadata
     const metadata = parsePackageMetadata(pkg);
 
-    // 9. Parse document XML
+    // 10. Parse document XML
     const rootNode = defaultXmlAdapter.parse(textDecoder.decode(docPart.data));
     return this.parseDocument(
       rootNode,
@@ -444,6 +468,7 @@ export class StandardDocumentParser implements DocumentParser {
       metadata,
       footnotes,
       endnotes,
+      comments,
     );
   }
 }

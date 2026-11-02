@@ -29,6 +29,7 @@ export const KNOWN_CONTENT_TYPES = {
   WML_FOOTER: 'application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml',
   WML_FOOTNOTES: 'application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml',
   WML_ENDNOTES: 'application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml',
+  WML_COMMENTS: 'application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml',
   CORE_PROPERTIES: 'application/vnd.openxmlformats-package.core-properties+xml',
   EXTENDED_PROPERTIES: 'application/vnd.openxmlformats-officedocument.extended-properties+xml',
 } as const;

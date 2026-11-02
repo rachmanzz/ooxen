@@ -18,7 +18,8 @@ export type ASTNodeType =
   | 'header'
   | 'footer'
   | 'footnote'
-  | 'endnote';
+  | 'endnote'
+  | 'comment';
 
 export interface BaseASTNode {
   type: ASTNodeType;
@@ -87,6 +88,7 @@ export interface RunNode extends BaseASTNode {
   bookmarkName?: string;
   footnoteRef?: FootnoteReference;
   isFootnoteRefMark?: boolean;
+  commentId?: string;
 }
 
 export interface ParagraphNode extends BaseASTNode {
@@ -200,10 +202,20 @@ export interface FootnoteNode extends BaseASTNode {
   children: BlockNode[];
 }
 
+export interface CommentNode extends BaseASTNode {
+  type: 'comment';
+  id: string;
+  author?: string;
+  date?: string; // ISO 8601 string
+  initials?: string;
+  children: BlockNode[];
+}
+
 export interface DocumentNode extends BaseASTNode {
   type: 'document';
   sections: SectionNode[];
   metadata?: DocumentMetadata;
   footnotes?: FootnoteNode[];
   endnotes?: FootnoteNode[];
+  comments?: CommentNode[];
 }
