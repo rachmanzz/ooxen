@@ -104,6 +104,27 @@ export class StandardPageEngine implements PageEngine {
             baseline: block.heightPt,
           });
           currentY += block.heightPt;
+        } else if (block.type === 'image') {
+          if (currentY + block.heightPt > contentHeight && currentLines.length > 0) {
+            emitPage();
+          }
+          currentLines.push({
+            bounds: {
+              x: margins.left,
+              y: margins.top + currentY,
+              width: block.widthPt,
+              height: block.heightPt,
+            },
+            fragments: [
+              {
+                text: '',
+                image: block,
+                bounds: { x: 0, y: 0, width: block.widthPt, height: block.heightPt },
+              },
+            ],
+            baseline: block.heightPt,
+          });
+          currentY += block.heightPt;
         }
       }
 
@@ -226,6 +247,24 @@ export class StandardPageEngine implements PageEngine {
                 {
                   text: '',
                   drawing: child,
+                  bounds: { x: 0, y: 0, width: child.widthPt, height: child.heightPt },
+                },
+              ],
+              baseline: child.heightPt,
+            });
+            cellY += child.heightPt;
+          } else if (child.type === 'image') {
+            cellLines.push({
+              bounds: {
+                x: 4,
+                y: cellY,
+                width: child.widthPt,
+                height: child.heightPt,
+              },
+              fragments: [
+                {
+                  text: '',
+                  image: child,
                   bounds: { x: 0, y: 0, width: child.widthPt, height: child.heightPt },
                 },
               ],

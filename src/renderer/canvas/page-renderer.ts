@@ -57,6 +57,8 @@ export class StandardPageRenderer implements PageRenderer {
 
         if (fragment.drawing) {
           this.primitives.drawShape(target, fragment.drawing, fragX, fragY);
+        } else if (fragment.image) {
+          this.primitives.drawImage(target, fragment.image, fragX, fragY);
         } else {
           this.primitives.drawText(
             target,

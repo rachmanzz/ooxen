@@ -1,5 +1,5 @@
-import type { DocumentNode, DrawingShapeNode, ParagraphNode, RunNode, SectionNode, TableCellNode, TableNode, TableRowNode } from '../types/ast.js';
-import { ptToTwips } from '../types/common.js';
+import type { DocumentNode, DrawingShapeNode, ImageNode, ParagraphNode, RunNode, SectionNode, TableCellNode, TableNode, TableRowNode } from '../types/ast.js';
+import { ptToEmu, ptToTwips } from '../types/common.js';
 import type { ParagraphStyle, TableCellStyle, TextStyle } from '../types/style.js';
 
 function escapeXml(text: string): string {
@@ -17,7 +17,7 @@ function cleanHexColor(color?: string): string | undefined {
 }
 
 /**
- * Builds standard ISO/IEC 29500-1 WordprocessingML and DrawingML XML strings.
+ * Builds standard ISO/IEC 29500-1 WordprocessingML, DrawingML shapes, and picture XML strings.
  */
 
 export interface WmlBuilder {
@@ -28,7 +28,7 @@ export class StandardWmlBuilder implements WmlBuilder {
   buildDocumentXml(document: DocumentNode): string {
     const lines: string[] = [
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
-      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">',
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">',
       '  <w:body>',
     ];
 
@@ -45,6 +45,8 @@ export class StandardWmlBuilder implements WmlBuilder {
           lines.push(this.serializeTable(block));
         } else if (block.type === 'drawing') {
           lines.push(this.serializeBlockDrawing(block));
+        } else if (block.type === 'image') {
+          lines.push(this.serializeBlockImage(block));
         }
       }
 
@@ -137,12 +139,62 @@ export class StandardWmlBuilder implements WmlBuilder {
     }
 
     const drawingXml = r.drawing ? this.serializeDrawing(r.drawing) : '';
+    const imageXml = r.image ? this.serializeImage(r.image) : '';
 
-    if (textPieces.length === 0 && !rPr && !drawingXml) {
+    if (textPieces.length === 0 && !rPr && !drawingXml && !imageXml) {
       return '';
     }
 
-    return ['      <w:r>', rPr, ...textPieces, drawingXml, '      </w:r>'].filter(Boolean).join('\n');
+    return ['      <w:r>', rPr, ...textPieces, drawingXml, imageXml, '      </w:r>'].filter(Boolean).join('\n');
+  }
+
+  private serializeImage(image: ImageNode): string {
+    const cx = Math.round(ptToEmu(image.widthPt));
+    const cy = Math.round(ptToEmu(image.heightPt));
+    const id = image.id ?? '1';
+    const name = image.name ?? 'Picture 1';
+    const relId = image.relationshipId ?? 'rIdImage';
+    const altText = image.altText ?? name;
+
+    return [
+      '        <w:drawing>',
+      '          <wp:inline>',
+      `            <wp:extent cx="${cx}" cy="${cy}"/>`,
+      `            <wp:docPr id="${escapeXml(id)}" name="${escapeXml(name)}" descr="${escapeXml(altText)}"/>`,
+      '            <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">',
+      '              <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">',
+      '                <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">',
+      '                  <pic:nvPicPr>',
+      `                    <pic:cNvPr id="0" name="${escapeXml(name)}" descr="${escapeXml(altText)}"/>`,
+      '                    <pic:cNvPicPr/>',
+      '                  </pic:nvPicPr>',
+      '                  <pic:blipFill>',
+      `                    <a:blip r:embed="${escapeXml(relId)}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>`,
+      '                    <a:stretch><a:fillRect/></a:stretch>',
+      '                  </pic:blipFill>',
+      '                  <pic:spPr>',
+      '                    <a:xfrm>',
+      '                      <a:off x="0" y="0"/>',
+      `                      <a:ext cx="${cx}" cy="${cy}"/>`,
+      '                    </a:xfrm>',
+      '                    <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>',
+      '                  </pic:spPr>',
+      '                </pic:pic>',
+      '              </a:graphicData>',
+      '            </a:graphic>',
+      '          </wp:inline>',
+      '        </w:drawing>',
+    ].join('\n');
+  }
+
+  private serializeBlockImage(image: ImageNode): string {
+    return [
+      '    <w:p>',
+      '      <w:r>',
+      this.serializeImage(image),
+      '      </w:r>',
+      '    </w:p>',
+    ].join('\n');
   }
 
   private serializeDrawing(shape: DrawingShapeNode): string {
@@ -266,6 +318,7 @@ export class StandardWmlBuilder implements WmlBuilder {
       .map((child) => {
         if (child.type === 'paragraph') return this.serializeParagraph(child);
         if (child.type === 'table') return this.serializeTable(child);
+        if (child.type === 'image') return this.serializeBlockImage(child);
         return this.serializeBlockDrawing(child);
       })
       .join('\n');

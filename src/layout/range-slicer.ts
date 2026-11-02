@@ -34,20 +34,21 @@ export function coalesceRuns(runs: RunNode[]): RunNode[] {
   const result: RunNode[] = [];
 
   for (const run of runs) {
-    if (!run.text && !run.drawing) continue;
+    if (!run.text && !run.drawing && !run.image) continue;
 
-    if (run.drawing) {
+    if (run.drawing || run.image) {
       result.push({
         type: 'run',
         text: run.text ?? '',
         style: run.style ? { ...run.style } : undefined,
         drawing: run.drawing,
+        image: run.image,
       });
       continue;
     }
 
     const last = result[result.length - 1];
-    if (last && !last.drawing && areTextStylesEqual(last.style, run.style)) {
+    if (last && !last.drawing && !last.image && areTextStylesEqual(last.style, run.style)) {
       last.text += run.text;
     } else {
       result.push({
@@ -109,6 +110,7 @@ export function sliceParagraphRange(
         text: runText,
         style: run.style ? { ...run.style } : undefined,
         drawing: run.drawing,
+        image: run.image,
       });
     } else if (runStart >= start && runEnd <= end) {
       // Case 2: Run is completely inside the target range
@@ -117,6 +119,7 @@ export function sliceParagraphRange(
         text: runText,
         style: { ...run.style, ...patchStyle },
         drawing: run.drawing,
+        image: run.image,
       });
     } else {
       // Case 3: Partial overlap -> split into up to 3 segments

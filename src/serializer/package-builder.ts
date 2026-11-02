@@ -6,12 +6,24 @@ import { defaultStylesBuilder, type StylesBuilder } from './styles-builder.js';
 
 const textEncoder = new TextEncoder();
 
+export interface ImageMediaPart {
+  partName: string;
+  relationshipId: string;
+  contentType: string;
+  data: Uint8Array;
+}
+
 /**
  * Assembles generated parts into a valid OPC container package.
  */
 
 export interface PackageBuilder {
-  assemblePackage(documentXml: string, customStylesXml?: string, customNumberingXml?: string): OpcPackage;
+  assemblePackage(
+    documentXml: string,
+    customStylesXml?: string,
+    customNumberingXml?: string,
+    mediaParts?: ImageMediaPart[],
+  ): OpcPackage;
 }
 
 export class StandardPackageBuilder implements PackageBuilder {
@@ -26,7 +38,12 @@ export class StandardPackageBuilder implements PackageBuilder {
     this.numberingBuilder = numberingBuilder;
   }
 
-  assemblePackage(documentXml: string, customStylesXml?: string, customNumberingXml?: string): OpcPackage {
+  assemblePackage(
+    documentXml: string,
+    customStylesXml?: string,
+    customNumberingXml?: string,
+    mediaParts: ImageMediaPart[] = [],
+  ): OpcPackage {
     const pkg = createPackage();
 
     // 1. Root Relationship to document.xml
@@ -70,6 +87,22 @@ export class StandardPackageBuilder implements PackageBuilder {
         name: 'word/numbering.xml',
         contentType: KNOWN_CONTENT_TYPES.WML_NUMBERING,
         data: textEncoder.encode(numXml),
+      });
+    }
+
+    // 5. Add binary media parts and relationships
+    for (const media of mediaParts) {
+      const relTarget = media.partName.replace(/^word\//, '');
+      pkg.addRelationship('word/document.xml', {
+        id: media.relationshipId,
+        type: KNOWN_RELATIONSHIPS.IMAGE,
+        target: relTarget,
+      });
+
+      pkg.setPart({
+        name: media.partName,
+        contentType: media.contentType,
+        data: media.data,
       });
     }
 

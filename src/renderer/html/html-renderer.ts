@@ -1,4 +1,5 @@
-import type { DrawingShapeNode, DocumentNode, ParagraphNode, RunNode, SectionNode, TableCellNode, TableNode, TableRowNode, VectorPathCommand } from '../../types/ast.js';
+import type { DrawingShapeNode, ImageNode, DocumentNode, ParagraphNode, RunNode, SectionNode, TableCellNode, TableNode, TableRowNode, VectorPathCommand } from '../../types/ast.js';
+import { uint8ArrayToBase64 } from '../../types/common.js';
 import { defaultStyleMapper, type StyleMapper } from './style-mapper.js';
 
 function escapeXml(text: string): string {
@@ -41,6 +42,17 @@ export function renderShapeToSvg(shape: DrawingShapeNode): string {
   return `<svg class="ooxen-shape" width="${shape.widthPt}pt" height="${shape.heightPt}pt" viewBox="0 0 ${shape.widthPt} ${shape.heightPt}" xmlns="http://www.w3.org/2000/svg"><path d="${d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"/></svg>`;
 }
 
+export function renderImageToHtml(image: ImageNode): string {
+  const alt = image.altText ?? image.name ?? '';
+  let src = image.src;
+  if (!src && image.data && image.mimeType) {
+    src = `data:${image.mimeType};base64,${uint8ArrayToBase64(image.data)}`;
+  }
+  src = src ?? '';
+
+  return `<img class="ooxen-image" src="${escapeXml(src)}" alt="${escapeXml(alt)}" style="width: ${image.widthPt}pt; height: ${image.heightPt}pt;" />`;
+}
+
 /**
  * Strict well-formed XML-HTML (XHTML) Document Renderer.
  */
@@ -75,6 +87,7 @@ export class StandardHtmlRenderer implements HtmlRenderer {
       .map((block) => {
         if (block.type === 'paragraph') return this.renderParagraph(block);
         if (block.type === 'table') return this.renderTable(block);
+        if (block.type === 'image') return `    ${renderImageToHtml(block)}`;
         return `    ${renderShapeToSvg(block)}`;
       })
       .join('\n');
@@ -101,7 +114,8 @@ export class StandardHtmlRenderer implements HtmlRenderer {
     // Convert newlines in run text to self-closing <br/> tags
     const escaped = escapeXml(run.text).replace(/\n/g, '<br/>');
     const shapeSvg = run.drawing ? renderShapeToSvg(run.drawing) : '';
-    return `<span class="ooxen-r"${styleAttr}>${escaped}${shapeSvg}</span>`;
+    const imageHtml = run.image ? renderImageToHtml(run.image) : '';
+    return `<span class="ooxen-r"${styleAttr}>${escaped}${shapeSvg}${imageHtml}</span>`;
   }
 
   private renderTable(table: TableNode): string {
@@ -131,6 +145,7 @@ export class StandardHtmlRenderer implements HtmlRenderer {
       .map((child) => {
         if (child.type === 'paragraph') return this.renderParagraph(child);
         if (child.type === 'table') return this.renderTable(child);
+        if (child.type === 'image') return renderImageToHtml(child);
         return renderShapeToSvg(child);
       })
       .join('');

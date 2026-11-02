@@ -5,7 +5,7 @@ import type { ParagraphStyle, TableCellStyle, TextStyle } from './style.js';
  * Universal Document AST (Abstract Syntax Tree) representing ISO/IEC 29500 WordprocessingML and DrawingML.
  */
 
-export type ASTNodeType = 'document' | 'section' | 'paragraph' | 'run' | 'table' | 'table-row' | 'table-cell' | 'drawing';
+export type ASTNodeType = 'document' | 'section' | 'paragraph' | 'run' | 'table' | 'table-row' | 'table-cell' | 'drawing' | 'image';
 
 export interface BaseASTNode {
   type: ASTNodeType;
@@ -38,11 +38,25 @@ export interface DrawingShapeNode extends BaseASTNode {
   };
 }
 
+export interface ImageNode extends BaseASTNode {
+  type: 'image';
+  id?: string;
+  name?: string;
+  altText?: string;
+  widthPt: number;
+  heightPt: number;
+  src?: string;
+  data?: Uint8Array;
+  mimeType?: string;
+  relationshipId?: string;
+}
+
 export interface RunNode extends BaseASTNode {
   type: 'run';
   text: string;
   style?: TextStyle;
   drawing?: DrawingShapeNode;
+  image?: ImageNode;
 }
 
 export interface ParagraphNode extends BaseASTNode {
@@ -69,7 +83,7 @@ export interface TableNode extends BaseASTNode {
   rows: TableRowNode[];
 }
 
-export type BlockNode = ParagraphNode | TableNode | DrawingShapeNode;
+export type BlockNode = ParagraphNode | TableNode | DrawingShapeNode | ImageNode;
 
 export interface SectionProperties {
   pageSize: Size; // points

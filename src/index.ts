@@ -25,6 +25,7 @@ export * from './parser/wml/table-parser.js';
 export * from './parser/wml/style-resolver.js';
 export * from './parser/wml/numbering-resolver.js';
 export * from './parser/dml/shape-parser.js';
+export * from './parser/dml/image-parser.js';
 
 // Layout
 export * from './layout/page-engine.js';

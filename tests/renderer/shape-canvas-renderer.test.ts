@@ -79,6 +79,10 @@ class FullMockCanvasTarget implements CanvasTarget {
   stroke(): void {
     this.calls.push({ method: 'stroke', args: [this.strokeStyle, this.lineWidth] });
   }
+
+  drawImage(image: any, x: number, y: number, w: number, h: number): void {
+    this.calls.push({ method: 'drawImage', args: [image, x, y, w, h] });
+  }
 }
 
 describe('Vector Shape Canvas Renderer', () => {
@@ -167,5 +171,44 @@ describe('Vector Shape Canvas Renderer', () => {
 
     const hasShapeStroke = target.calls.some((c) => c.method === 'stroke' && c.args[0] === '#008800');
     expect(hasShapeStroke).toBe(true);
+  });
+
+  it('should render inline image fragment onto canvas', () => {
+    const renderer = new StandardPageRenderer();
+    const target = new FullMockCanvasTarget();
+
+    const page: PageLayout = {
+      pageIndex: 0,
+      size: { width: 595.28, height: 841.89 },
+      margins: { top: 72, right: 72, bottom: 72, left: 72 },
+      lines: [
+        {
+          bounds: { x: 72, y: 72, width: 450, height: 100 },
+          baseline: 90,
+          fragments: [
+            {
+              text: '',
+              image: {
+                type: 'image',
+                widthPt: 120,
+                heightPt: 80,
+                src: 'data:image/png;base64,AQID',
+              },
+              bounds: { x: 0, y: 0, width: 120, height: 80 },
+            },
+          ],
+        },
+      ],
+    };
+
+    renderer.renderPage(page, target);
+
+    const drawImageCall = target.calls.find((c) => c.method === 'drawImage');
+    expect(drawImageCall).toBeDefined();
+    expect(drawImageCall?.args[0]).toBe('data:image/png;base64,AQID');
+    expect(drawImageCall?.args[1]).toBe(72);
+    expect(drawImageCall?.args[2]).toBe(72);
+    expect(drawImageCall?.args[3]).toBe(120);
+    expect(drawImageCall?.args[4]).toBe(80);
   });
 });

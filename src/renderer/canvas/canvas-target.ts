@@ -21,6 +21,7 @@ export interface CanvasTarget {
   arc?(x: number, y: number, radius: number, startAngle: number, endAngle: number, counterclockwise?: boolean): void;
   fill?(): void;
   stroke?(): void;
+  drawImage?(image: any, x: number, y: number, w: number, h: number): void;
 
   font: string;
   fillStyle: string | CanvasGradient | CanvasPattern;

@@ -1,4 +1,4 @@
-import type { DrawingShapeNode } from '../../types/ast.js';
+import type { DrawingShapeNode, ImageNode } from '../../types/ast.js';
 import type { Rect } from '../../types/common.js';
 import type { TextStyle } from '../../types/style.js';
 import type { CanvasTarget } from './canvas-target.js';
@@ -11,6 +11,7 @@ export interface DrawPrimitives {
   drawText(target: CanvasTarget, text: string, x: number, y: number, baseline: number, style?: TextStyle): void;
   drawRect(target: CanvasTarget, rect: Rect, fillColor?: string, strokeColor?: string, strokeWidth?: number): void;
   drawShape(target: CanvasTarget, shape: DrawingShapeNode, x: number, y: number): void;
+  drawImage(target: CanvasTarget, image: ImageNode, x: number, y: number): void;
 }
 
 export class StandardDrawPrimitives implements DrawPrimitives {
@@ -126,6 +127,25 @@ export class StandardDrawPrimitives implements DrawPrimitives {
       }
     }
 
+    target.restore();
+  }
+
+  drawImage(target: CanvasTarget, image: ImageNode, x: number, y: number): void {
+    target.save();
+    if (target.drawImage && image.src) {
+      target.drawImage(image.src, x, y, image.widthPt, image.heightPt);
+    } else {
+      // Fallback placeholder rendering
+      target.fillStyle = '#F0F0F0';
+      target.fillRect(x, y, image.widthPt, image.heightPt);
+      target.strokeStyle = '#CCCCCC';
+      target.lineWidth = 1;
+      target.strokeRect(x, y, image.widthPt, image.heightPt);
+      if (image.altText || image.name) {
+        target.fillStyle = '#666666';
+        target.fillText(image.altText ?? image.name ?? '[Image]', x + 4, y + image.heightPt / 2);
+      }
+    }
     target.restore();
   }
 }

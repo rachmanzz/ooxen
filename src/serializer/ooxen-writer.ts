@@ -1,8 +1,10 @@
+import { guessMimeType } from '../parser/dml/image-parser.js';
 import { generatePresetGeometry, parseSvgPathToCommands } from '../parser/dml/shape-parser.js';
 import { defaultXmlAdapter, type XmlAdapter, type XmlNode } from '../parser/xml-adapter.js';
-import type { BlockNode, DocumentNode, DrawingShapeNode, ParagraphNode, RunNode, SectionNode, TableCellNode, TableNode, TableRowNode } from '../types/ast.js';
+import type { BlockNode, DocumentNode, DrawingShapeNode, ImageNode, ParagraphNode, RunNode, SectionNode, TableCellNode, TableNode, TableRowNode } from '../types/ast.js';
+import { base64ToUint8Array } from '../types/common.js';
 import type { ParagraphStyle, TableCellStyle, TextStyle } from '../types/style.js';
-import { defaultPackageBuilder, type PackageBuilder } from './package-builder.js';
+import { defaultPackageBuilder, type ImageMediaPart, type PackageBuilder } from './package-builder.js';
 import { defaultWmlBuilder, type WmlBuilder } from './wml-builder.js';
 
 /**
@@ -30,8 +32,62 @@ export class StandardOoxenWriter implements OoxenWriter {
   }
 
   async write(document: DocumentNode): Promise<Uint8Array> {
+    const mediaParts: ImageMediaPart[] = [];
+    let imgCounter = 1;
+
+    const processImage = (img: ImageNode): void => {
+      const relId = img.relationshipId || `rIdImg${imgCounter++}`;
+      img.relationshipId = relId;
+
+      let rawData: Uint8Array | undefined = img.data;
+      let mimeType = img.mimeType || 'image/png';
+
+      if (!rawData && img.src?.startsWith('data:')) {
+        const matches = img.src.match(/^data:([^;]+);base64,(.+)$/);
+        if (matches) {
+          mimeType = matches[1] || mimeType;
+          rawData = base64ToUint8Array(matches[2]!);
+        }
+      }
+
+      if (rawData) {
+        const ext = mimeType.replace(/^image\//, '').replace(/\+xml$/, '') || 'png';
+        const partName = `word/media/image${imgCounter}.${ext}`;
+        mediaParts.push({
+          partName,
+          relationshipId: relId,
+          contentType: mimeType,
+          data: rawData,
+        });
+      }
+    };
+
+    const traverseBlock = (block: BlockNode): void => {
+      if (block.type === 'image') {
+        processImage(block);
+      } else if (block.type === 'paragraph') {
+        for (const r of block.children) {
+          if (r.image) processImage(r.image);
+        }
+      } else if (block.type === 'table') {
+        for (const row of block.rows) {
+          for (const cell of row.children) {
+            for (const child of cell.children) {
+              traverseBlock(child);
+            }
+          }
+        }
+      }
+    };
+
+    for (const section of document.sections) {
+      for (const block of section.children) {
+        traverseBlock(block);
+      }
+    }
+
     const documentXml = this.wmlBuilder.buildDocumentXml(document);
-    const pkg = this.packageBuilder.assemblePackage(documentXml);
+    const pkg = this.packageBuilder.assemblePackage(documentXml, undefined, undefined, mediaParts);
     return pkg.serialize();
   }
 
@@ -86,6 +142,9 @@ export class StandardOoxenWriter implements OoxenWriter {
       } else if (tag === 'svg') {
         const shape = this.parseSvgNode(node);
         if (shape) blocks.push(shape);
+      } else if (tag === 'img') {
+        const img = this.parseHtmlImage(node);
+        if (img) blocks.push(img);
       } else if (tag === 'ul' || tag === 'ol') {
         const numId = tag === 'ul' ? 1 : 2;
         this.parseHtmlList(node, numId, 0, blocks);
@@ -121,6 +180,46 @@ export class StandardOoxenWriter implements OoxenWriter {
         this.parseHtmlList(child, subNumId, level + 1, outBlocks);
       }
     }
+  }
+
+  private parseHtmlImage(imgNode: XmlNode): ImageNode | undefined {
+    const src = imgNode.attributes['src'] ?? '';
+    const alt = imgNode.attributes['alt'] ?? imgNode.attributes['title'];
+    const wStr = imgNode.attributes['width'];
+    const hStr = imgNode.attributes['height'];
+
+    let widthPt = 150;
+    let heightPt = 100;
+
+    if (wStr) {
+      const num = Number.parseFloat(wStr.replace(/pt$/, ''));
+      if (!Number.isNaN(num) && num > 0) widthPt = num;
+    }
+    if (hStr) {
+      const num = Number.parseFloat(hStr.replace(/pt$/, ''));
+      if (!Number.isNaN(num) && num > 0) heightPt = num;
+    }
+
+    let data: Uint8Array | undefined;
+    let mimeType = guessMimeType(src);
+
+    if (src.startsWith('data:')) {
+      const match = src.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) {
+        mimeType = match[1] || mimeType;
+        data = base64ToUint8Array(match[2]!);
+      }
+    }
+
+    return {
+      type: 'image',
+      altText: alt,
+      widthPt,
+      heightPt,
+      src,
+      data,
+      mimeType,
+    };
   }
 
   private parseSvgNode(svgNode: XmlNode): DrawingShapeNode | undefined {
@@ -168,9 +267,14 @@ export class StandardOoxenWriter implements OoxenWriter {
         if (spanCss['font-family']) rStyle.fontFamily = spanCss['font-family'];
 
         let drawing: DrawingShapeNode | undefined;
+        let image: ImageNode | undefined;
         const svgChild = child.children.find((c) => c.nodeName.toLowerCase().endsWith('svg'));
         if (svgChild) {
           drawing = this.parseSvgNode(svgChild);
+        }
+        const imgChild = child.children.find((c) => c.nodeName.toLowerCase().endsWith('img'));
+        if (imgChild) {
+          image = this.parseHtmlImage(imgChild);
         }
 
         runs.push({
@@ -178,7 +282,17 @@ export class StandardOoxenWriter implements OoxenWriter {
           text: child.textContent,
           style: Object.keys(rStyle).length > 0 ? rStyle : undefined,
           drawing,
+          image,
         });
+      } else if (tag === 'img') {
+        const image = this.parseHtmlImage(child);
+        if (image) {
+          runs.push({
+            type: 'run',
+            text: '',
+            image,
+          });
+        }
       } else if (tag === 'svg') {
         const shape = this.parseSvgNode(child);
         if (shape) {

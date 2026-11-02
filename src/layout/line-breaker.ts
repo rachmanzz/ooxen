@@ -1,4 +1,4 @@
-import type { DrawingShapeNode, ParagraphNode, RunNode } from '../types/ast.js';
+import type { DrawingShapeNode, ImageNode, ParagraphNode, RunNode } from '../types/ast.js';
 import type { Rect } from '../types/common.js';
 import type { TextStyle } from '../types/style.js';
 import { defaultTextMetrics, type TextMetricsMeasurer } from './text-metrics.js';
@@ -11,6 +11,7 @@ export interface LineFragment {
   text: string;
   style?: TextStyle;
   drawing?: DrawingShapeNode;
+  image?: ImageNode;
   bounds: Rect; // relative to line (x: offset from line start, y: 0)
 }
 
@@ -33,6 +34,7 @@ interface WordToken {
   descent: number;
   style?: TextStyle;
   drawing?: DrawingShapeNode;
+  image?: ImageNode;
 }
 
 export class StandardLineBreaker implements LineBreaker {
@@ -169,6 +171,19 @@ export class StandardLineBreaker implements LineBreaker {
         });
       }
 
+      if (run.image) {
+        tokens.push({
+          text: '',
+          isSpace: false,
+          width: run.image.widthPt,
+          height: run.image.heightPt,
+          ascent: run.image.heightPt,
+          descent: 0,
+          style: run.style,
+          image: run.image,
+        });
+      }
+
       const text = run.text;
       if (!text) continue;
 
@@ -267,6 +282,7 @@ export class StandardLineBreaker implements LineBreaker {
         text: token.text,
         style: token.style,
         drawing: token.drawing,
+        image: token.image,
         bounds: {
           x: currentX,
           y: maxAscent - token.ascent, // baseline alignment
