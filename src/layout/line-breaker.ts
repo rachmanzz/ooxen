@@ -1,4 +1,4 @@
-import type { DrawingShapeNode, ImageNode, ParagraphNode, RunNode } from '../types/ast.js';
+import type { DrawingShapeNode, HyperlinkInfo, ImageNode, ParagraphNode, RunNode } from '../types/ast.js';
 import type { Rect } from '../types/common.js';
 import type { TextStyle } from '../types/style.js';
 import { defaultTextMetrics, type TextMetricsMeasurer } from './text-metrics.js';
@@ -13,6 +13,8 @@ export interface LineFragment {
   drawing?: DrawingShapeNode;
   image?: ImageNode;
   bounds: Rect; // relative to line (x: offset from line start, y: 0)
+  hyperlink?: HyperlinkInfo;
+  bookmarkName?: string;
 }
 
 export interface LayoutLine {
@@ -35,6 +37,8 @@ interface WordToken {
   style?: TextStyle;
   drawing?: DrawingShapeNode;
   image?: ImageNode;
+  hyperlink?: HyperlinkInfo;
+  bookmarkName?: string;
 }
 
 export class StandardLineBreaker implements LineBreaker {
@@ -168,6 +172,8 @@ export class StandardLineBreaker implements LineBreaker {
           descent: 0,
           style: run.style,
           drawing: run.drawing,
+          hyperlink: run.hyperlink,
+          bookmarkName: run.bookmarkName,
         });
       }
 
@@ -181,6 +187,8 @@ export class StandardLineBreaker implements LineBreaker {
           descent: 0,
           style: run.style,
           image: run.image,
+          hyperlink: run.hyperlink,
+          bookmarkName: run.bookmarkName,
         });
       }
 
@@ -193,30 +201,36 @@ export class StandardLineBreaker implements LineBreaker {
 
         if (char === '\n') {
           if (currentWord.length > 0) {
-            tokens.push(this.createToken(currentWord, false, run.style));
+            tokens.push(this.createToken(currentWord, false, run.style, run.hyperlink, run.bookmarkName));
             currentWord = '';
           }
-          tokens.push(this.createToken('\n', false, run.style));
+          tokens.push(this.createToken('\n', false, run.style, run.hyperlink, run.bookmarkName));
         } else if (char === ' ' || char === '\t') {
           if (currentWord.length > 0) {
-            tokens.push(this.createToken(currentWord, false, run.style));
+            tokens.push(this.createToken(currentWord, false, run.style, run.hyperlink, run.bookmarkName));
             currentWord = '';
           }
-          tokens.push(this.createToken(char, true, run.style));
+          tokens.push(this.createToken(char, true, run.style, run.hyperlink, run.bookmarkName));
         } else {
           currentWord += char;
         }
       }
 
       if (currentWord.length > 0) {
-        tokens.push(this.createToken(currentWord, false, run.style));
+        tokens.push(this.createToken(currentWord, false, run.style, run.hyperlink, run.bookmarkName));
       }
     }
 
     return tokens;
   }
 
-  private createToken(text: string, isSpace: boolean, style?: TextStyle): WordToken {
+  private createToken(
+    text: string,
+    isSpace: boolean,
+    style?: TextStyle,
+    hyperlink?: HyperlinkInfo,
+    bookmarkName?: string,
+  ): WordToken {
     const m = this.metrics.measureText(text, style);
     return {
       text,
@@ -226,6 +240,8 @@ export class StandardLineBreaker implements LineBreaker {
       ascent: m.ascent,
       descent: m.descent,
       style,
+      hyperlink,
+      bookmarkName,
     };
   }
 
@@ -283,6 +299,8 @@ export class StandardLineBreaker implements LineBreaker {
         style: token.style,
         drawing: token.drawing,
         image: token.image,
+        hyperlink: token.hyperlink,
+        bookmarkName: token.bookmarkName,
         bounds: {
           x: currentX,
           y: maxAscent - token.ascent, // baseline alignment

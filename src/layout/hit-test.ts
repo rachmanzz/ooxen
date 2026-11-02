@@ -1,3 +1,4 @@
+import type { HyperlinkInfo } from '../types/ast.js';
 import type { PageLayout } from './page-engine.js';
 
 /**
@@ -10,6 +11,8 @@ export interface HitTestResult {
   charOffsetInLine: number;
   text: string;
   charAt?: string;
+  hyperlink?: HyperlinkInfo;
+  bookmarkName?: string;
 }
 
 /**
@@ -108,5 +111,7 @@ export function hitTestPage(page: PageLayout, x: number, y: number): HitTestResu
     charOffsetInLine,
     text: fragment.text,
     charAt,
+    hyperlink: fragment.hyperlink,
+    bookmarkName: fragment.bookmarkName,
   };
 }

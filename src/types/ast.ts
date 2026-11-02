@@ -62,6 +62,12 @@ export interface ImageNode extends BaseASTNode {
   relationshipId?: string;
 }
 
+export interface HyperlinkInfo {
+  url?: string;
+  anchor?: string;
+  tooltip?: string;
+}
+
 export interface RunNode extends BaseASTNode {
   type: 'run';
   text: string;
@@ -69,12 +75,15 @@ export interface RunNode extends BaseASTNode {
   drawing?: DrawingShapeNode;
   image?: ImageNode;
   field?: 'PAGE' | 'NUMPAGES' | string;
+  hyperlink?: HyperlinkInfo;
+  bookmarkName?: string;
 }
 
 export interface ParagraphNode extends BaseASTNode {
   type: 'paragraph';
   style?: ParagraphStyle;
   children: RunNode[];
+  bookmarkName?: string;
 }
 
 export interface TableCellNode extends BaseASTNode {

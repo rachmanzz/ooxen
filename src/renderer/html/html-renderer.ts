@@ -131,25 +131,40 @@ export class StandardHtmlRenderer implements HtmlRenderer {
   private renderParagraph(paragraph: ParagraphNode): string {
     const cssObj = this.styleMapper.paragraphStyleToCss(paragraph.style);
     const styleAttr = Object.keys(cssObj).length > 0 ? ` style="${escapeXml(this.styleMapper.toCssString(cssObj))}"` : '';
+    const idAttr = paragraph.bookmarkName ? ` id="${escapeXml(paragraph.bookmarkName)}"` : '';
 
     const prefixHtml = paragraph.style?.numbering?.prefixText
       ? `<span class="ooxen-bullet" style="display: inline-block; min-width: 1.5em;">${escapeXml(paragraph.style.numbering.prefixText)} </span>`
       : '';
 
     const runsHtml = paragraph.children.map((run) => this.renderRun(run)).join('');
-    return `    <p class="ooxen-p"${styleAttr}>${prefixHtml}${runsHtml}</p>`;
+    return `    <p class="ooxen-p"${idAttr}${styleAttr}>${prefixHtml}${runsHtml}</p>`;
   }
 
   private renderRun(run: RunNode): string {
     const cssObj = this.styleMapper.textStyleToCss(run.style);
     const styleAttr = Object.keys(cssObj).length > 0 ? ` style="${escapeXml(this.styleMapper.toCssString(cssObj))}"` : '';
+    const idAttr = run.bookmarkName ? ` id="${escapeXml(run.bookmarkName)}"` : '';
 
     // Convert newlines in run text to self-closing <br/> tags
     const escaped = escapeXml(run.text).replace(/\n/g, '<br/>');
     const shapeSvg = run.drawing ? renderShapeToSvg(run.drawing) : '';
     const imageHtml = run.image ? renderImageToHtml(run.image) : '';
     const fieldClass = run.field ? ` ooxen-field-${run.field.toLowerCase()}` : '';
-    return `<span class="ooxen-r${fieldClass}"${styleAttr}>${escaped}${shapeSvg}${imageHtml}</span>`;
+
+    const spanHtml = `<span class="ooxen-r${fieldClass}"${idAttr}${styleAttr}>${escaped}${shapeSvg}${imageHtml}</span>`;
+
+    if (run.hyperlink) {
+      const href = run.hyperlink.url
+        ? ` href="${escapeXml(run.hyperlink.url)}"`
+        : run.hyperlink.anchor
+          ? ` href="#${escapeXml(run.hyperlink.anchor)}"`
+          : '';
+      const title = run.hyperlink.tooltip ? ` title="${escapeXml(run.hyperlink.tooltip)}"` : '';
+      return `<a class="ooxen-link"${href}${title}>${spanHtml}</a>`;
+    }
+
+    return spanHtml;
   }
 
   private renderTable(table: TableNode): string {

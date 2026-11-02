@@ -1,3 +1,4 @@
+import { KNOWN_RELATIONSHIPS, type OpcRelationship } from '../opc/relationships.js';
 import { guessMimeType } from '../parser/dml/image-parser.js';
 import { generatePresetGeometry, parseSvgPathToCommands } from '../parser/dml/shape-parser.js';
 import { defaultXmlAdapter, type XmlAdapter, type XmlNode } from '../parser/xml-adapter.js';
@@ -6,6 +7,7 @@ import type {
   DocumentNode,
   DrawingShapeNode,
   HeaderFooterNode,
+  HyperlinkInfo,
   ImageNode,
   ParagraphNode,
   RunNode,
@@ -74,12 +76,30 @@ export class StandardOoxenWriter implements OoxenWriter {
       }
     };
 
+    const externalRelationships: OpcRelationship[] = [];
+    const hyperlinkRelIds = new Map<string, string>();
+    let linkCounter = 1;
+
+    const processHyperlink = (url?: string): void => {
+      if (url && !hyperlinkRelIds.has(url)) {
+        const relId = `rIdLink${linkCounter++}`;
+        hyperlinkRelIds.set(url, relId);
+        externalRelationships.push({
+          id: relId,
+          type: KNOWN_RELATIONSHIPS.HYPERLINK,
+          target: url,
+          targetMode: 'External',
+        });
+      }
+    };
+
     const traverseBlock = (block: BlockNode): void => {
       if (block.type === 'image') {
         processImage(block);
       } else if (block.type === 'paragraph') {
         for (const r of block.children) {
           if (r.image) processImage(r.image);
+          if (r.hyperlink?.url) processHyperlink(r.hyperlink.url);
         }
       } else if (block.type === 'table') {
         for (const row of block.rows) {
@@ -111,7 +131,7 @@ export class StandardOoxenWriter implements OoxenWriter {
             const partName = `word/header${hdrCounter}.xml`;
             hdrCounter++;
             headerFooterRelIds.set(node, relId);
-            const xml = this.wmlBuilder.buildHeaderXml(node);
+            const xml = this.wmlBuilder.buildHeaderXml(node, hyperlinkRelIds);
             headerFooterParts.push({
               partName,
               relationshipId: relId,
@@ -131,7 +151,7 @@ export class StandardOoxenWriter implements OoxenWriter {
             const partName = `word/footer${ftrCounter}.xml`;
             ftrCounter++;
             headerFooterRelIds.set(node, relId);
-            const xml = this.wmlBuilder.buildFooterXml(node);
+            const xml = this.wmlBuilder.buildFooterXml(node, hyperlinkRelIds);
             headerFooterParts.push({
               partName,
               relationshipId: relId,
@@ -143,8 +163,15 @@ export class StandardOoxenWriter implements OoxenWriter {
       }
     }
 
-    const documentXml = this.wmlBuilder.buildDocumentXml(document, headerFooterRelIds);
-    const pkg = this.packageBuilder.assemblePackage(documentXml, undefined, undefined, mediaParts, headerFooterParts);
+    const documentXml = this.wmlBuilder.buildDocumentXml(document, headerFooterRelIds, hyperlinkRelIds);
+    const pkg = this.packageBuilder.assemblePackage(
+      documentXml,
+      undefined,
+      undefined,
+      mediaParts,
+      headerFooterParts,
+      externalRelationships,
+    );
     return pkg.serialize();
   }
 
@@ -326,6 +353,7 @@ export class StandardOoxenWriter implements OoxenWriter {
   private parseHtmlParagraph(pNode: XmlNode): ParagraphNode {
     const style = this.parseCssStyle(pNode.attributes['style']);
     const pStyle: ParagraphStyle = {};
+    const bookmarkName = pNode.attributes['id'] ?? pNode.attributes['name'];
 
     if (style['text-align'] === 'center' || style['text-align'] === 'right' || style['text-align'] === 'justify') {
       pStyle.alignment = style['text-align'];
@@ -335,43 +363,55 @@ export class StandardOoxenWriter implements OoxenWriter {
     for (const child of pNode.children) {
       const tag = child.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
       if (tag === 'span') {
-        const spanCss = this.parseCssStyle(child.attributes['style']);
-        const rStyle: TextStyle = {};
-
-        if (spanCss['font-weight'] === 'bold') rStyle.bold = true;
-        if (spanCss['font-style'] === 'italic') rStyle.italic = true;
-        if (spanCss['text-decoration']?.includes('underline')) rStyle.underline = true;
-        if (spanCss['text-decoration']?.includes('line-through')) rStyle.strike = true;
-        if (spanCss['color']) rStyle.color = spanCss['color'];
-        if (spanCss['font-family']) rStyle.fontFamily = spanCss['font-family'];
-
-        let drawing: DrawingShapeNode | undefined;
-        let image: ImageNode | undefined;
-        const svgChild = child.children.find((c) => c.nodeName.toLowerCase().endsWith('svg'));
-        if (svgChild) {
-          drawing = this.parseSvgNode(svgChild);
+        runs.push(this.parseSpanToRun(child));
+      } else if (tag === 'a') {
+        const href = child.attributes['href'];
+        const title = child.attributes['title'];
+        const aId = child.attributes['id'] ?? child.attributes['name'];
+        let url: string | undefined;
+        let anchor: string | undefined;
+        if (href?.startsWith('#')) {
+          anchor = href.slice(1);
+        } else if (href) {
+          url = href;
         }
-        const imgChild = child.children.find((c) => c.nodeName.toLowerCase().endsWith('img'));
-        if (imgChild) {
-          image = this.parseHtmlImage(imgChild);
-        }
+        const hlink: HyperlinkInfo = { url, anchor, tooltip: title };
 
-        const className = child.attributes['class'] ?? '';
-        let field: string | undefined;
-        if (className.includes('ooxen-field-page') || child.textContent.trim() === '{{PAGE}}') {
-          field = 'PAGE';
-        } else if (className.includes('ooxen-field-numpages') || child.textContent.trim() === '{{NUMPAGES}}') {
-          field = 'NUMPAGES';
+        if (child.children.length === 0 && child.textContent) {
+          runs.push({
+            type: 'run',
+            text: child.textContent,
+            style: { underline: true, color: '#0563C1' },
+            hyperlink: hlink,
+            bookmarkName: aId,
+          });
+        } else {
+          for (const aChild of child.children) {
+            const aTag = aChild.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+            if (aTag === 'span') {
+              runs.push(this.parseSpanToRun(aChild, hlink, aId));
+            } else if (aTag === 'img') {
+              const image = this.parseHtmlImage(aChild);
+              if (image) {
+                runs.push({
+                  type: 'run',
+                  text: '',
+                  image,
+                  hyperlink: hlink,
+                  bookmarkName: aId,
+                });
+              }
+            } else {
+              runs.push({
+                type: 'run',
+                text: aChild.textContent,
+                style: { underline: true, color: '#0563C1' },
+                hyperlink: hlink,
+                bookmarkName: aId,
+              });
+            }
+          }
         }
-
-        runs.push({
-          type: 'run',
-          text: field ? (child.textContent.replace(/\{\{PAGE\}\}|\{\{NUMPAGES\}\}/g, '1') || '1') : child.textContent,
-          style: Object.keys(rStyle).length > 0 ? rStyle : undefined,
-          drawing,
-          image,
-          field,
-        });
       } else if (tag === 'img') {
         const image = this.parseHtmlImage(child);
         if (image) {
@@ -402,7 +442,52 @@ export class StandardOoxenWriter implements OoxenWriter {
     return {
       type: 'paragraph',
       style: Object.keys(pStyle).length > 0 ? pStyle : undefined,
+      bookmarkName,
       children: runs,
+    };
+  }
+
+  private parseSpanToRun(spanNode: XmlNode, hyperlink?: HyperlinkInfo, bookmarkName?: string): RunNode {
+    const spanCss = this.parseCssStyle(spanNode.attributes['style']);
+    const rStyle: TextStyle = {};
+
+    if (spanCss['font-weight'] === 'bold') rStyle.bold = true;
+    if (spanCss['font-style'] === 'italic') rStyle.italic = true;
+    if (spanCss['text-decoration']?.includes('underline')) rStyle.underline = true;
+    if (spanCss['text-decoration']?.includes('line-through')) rStyle.strike = true;
+    if (spanCss['color']) rStyle.color = spanCss['color'];
+    if (spanCss['font-family']) rStyle.fontFamily = spanCss['font-family'];
+
+    let drawing: DrawingShapeNode | undefined;
+    let image: ImageNode | undefined;
+    const svgChild = spanNode.children.find((c) => c.nodeName.toLowerCase().endsWith('svg'));
+    if (svgChild) {
+      drawing = this.parseSvgNode(svgChild);
+    }
+    const imgChild = spanNode.children.find((c) => c.nodeName.toLowerCase().endsWith('img'));
+    if (imgChild) {
+      image = this.parseHtmlImage(imgChild);
+    }
+
+    const className = spanNode.attributes['class'] ?? '';
+    let field: string | undefined;
+    if (className.includes('ooxen-field-page') || spanNode.textContent.trim() === '{{PAGE}}') {
+      field = 'PAGE';
+    } else if (className.includes('ooxen-field-numpages') || spanNode.textContent.trim() === '{{NUMPAGES}}') {
+      field = 'NUMPAGES';
+    }
+
+    const bm = bookmarkName ?? spanNode.attributes['id'] ?? spanNode.attributes['name'];
+
+    return {
+      type: 'run',
+      text: field ? spanNode.textContent.replace(/\{\{PAGE\}\}|\{\{NUMPAGES\}\}/g, '1') || '1' : spanNode.textContent,
+      style: Object.keys(rStyle).length > 0 ? rStyle : undefined,
+      drawing,
+      image,
+      field,
+      hyperlink,
+      bookmarkName: bm,
     };
   }
 

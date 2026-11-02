@@ -2,7 +2,7 @@ import type { BlockNode, HeaderFooterNode, HeaderFooterType } from '../../types/
 import type { ImageResolver } from '../dml/image-parser.js';
 import { defaultXmlAdapter, type XmlAdapter, type XmlNode } from '../xml-adapter.js';
 import type { NumberingResolver } from './numbering-resolver.js';
-import { defaultParagraphParser, type ParagraphParser } from './paragraph-parser.js';
+import { defaultParagraphParser, type HyperlinkResolver, type ParagraphParser } from './paragraph-parser.js';
 import type { StyleResolver } from './style-resolver.js';
 import { defaultTableParser, type TableParser } from './table-parser.js';
 
@@ -42,6 +42,7 @@ export function parseHeaderFooterNode(
   styleResolver?: StyleResolver,
   numberingResolver?: NumberingResolver,
   imageResolver?: ImageResolver,
+  hyperlinkResolver?: HyperlinkResolver,
   paragraphParser: ParagraphParser = defaultParagraphParser,
   tableParser: TableParser = defaultTableParser,
 ): HeaderFooterNode {
@@ -54,7 +55,13 @@ export function parseHeaderFooterNode(
     const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
 
     if (tag === 'p') {
-      const paragraph = paragraphParser.parseParagraph(child, styleResolver, numberingResolver, imageResolver);
+      const paragraph = paragraphParser.parseParagraph(
+        child,
+        styleResolver,
+        numberingResolver,
+        imageResolver,
+        hyperlinkResolver,
+      );
       children.push(paragraph);
     } else if (tag === 'tbl') {
       const table = tableParser.parseTable(child, styleResolver, numberingResolver);
@@ -75,6 +82,7 @@ export function parseHeaderFooterXml(
   styleResolver?: StyleResolver,
   numberingResolver?: NumberingResolver,
   imageResolver?: ImageResolver,
+  hyperlinkResolver?: HyperlinkResolver,
   paragraphParser: ParagraphParser = defaultParagraphParser,
   tableParser: TableParser = defaultTableParser,
   xmlAdapter: XmlAdapter = defaultXmlAdapter,
@@ -86,6 +94,7 @@ export function parseHeaderFooterXml(
     styleResolver,
     numberingResolver,
     imageResolver,
+    hyperlinkResolver,
     paragraphParser,
     tableParser,
   );

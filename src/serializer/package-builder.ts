@@ -1,6 +1,6 @@
 import { KNOWN_CONTENT_TYPES } from '../opc/content-types.js';
 import { createPackage, type OpcPackage } from '../opc/package.js';
-import { KNOWN_RELATIONSHIPS } from '../opc/relationships.js';
+import { KNOWN_RELATIONSHIPS, type OpcRelationship } from '../opc/relationships.js';
 import { defaultNumberingBuilder, type NumberingBuilder } from './numbering-builder.js';
 import { defaultStylesBuilder, type StylesBuilder } from './styles-builder.js';
 
@@ -31,6 +31,7 @@ export interface PackageBuilder {
     customNumberingXml?: string,
     mediaParts?: ImageMediaPart[],
     headerFooterParts?: HeaderFooterPart[],
+    externalRelationships?: OpcRelationship[],
   ): OpcPackage;
 }
 
@@ -52,6 +53,7 @@ export class StandardPackageBuilder implements PackageBuilder {
     customNumberingXml?: string,
     mediaParts: ImageMediaPart[] = [],
     headerFooterParts: HeaderFooterPart[] = [],
+    externalRelationships: OpcRelationship[] = [],
   ): OpcPackage {
     const pkg = createPackage();
 
@@ -129,6 +131,11 @@ export class StandardPackageBuilder implements PackageBuilder {
         contentType: hf.type === 'header' ? KNOWN_CONTENT_TYPES.WML_HEADER : KNOWN_CONTENT_TYPES.WML_FOOTER,
         data: textEncoder.encode(hf.xml),
       });
+    }
+
+    // 7. Add external relationships (such as external hyperlinks)
+    for (const rel of externalRelationships) {
+      pkg.addRelationship('word/document.xml', rel);
     }
 
     return pkg;

@@ -22,6 +22,7 @@ export const KNOWN_RELATIONSHIPS = {
   IMAGE: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image',
   HEADER: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/header',
   FOOTER: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer',
+  HYPERLINK: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink',
 } as const;
 
 export function getRelationshipsPath(partPath?: string): string {

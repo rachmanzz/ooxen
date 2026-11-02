@@ -32,13 +32,21 @@ function cleanHexColor(color?: string): string | undefined {
  */
 
 export interface WmlBuilder {
-  buildDocumentXml(document: DocumentNode, headerFooterRelIds?: Map<HeaderFooterNode, string>): string;
-  buildHeaderXml(header: HeaderFooterNode): string;
-  buildFooterXml(footer: HeaderFooterNode): string;
+  buildDocumentXml(
+    document: DocumentNode,
+    headerFooterRelIds?: Map<HeaderFooterNode, string>,
+    hyperlinkRelIds?: Map<string, string>,
+  ): string;
+  buildHeaderXml(header: HeaderFooterNode, hyperlinkRelIds?: Map<string, string>): string;
+  buildFooterXml(footer: HeaderFooterNode, hyperlinkRelIds?: Map<string, string>): string;
 }
 
 export class StandardWmlBuilder implements WmlBuilder {
-  buildDocumentXml(document: DocumentNode, headerFooterRelIds?: Map<HeaderFooterNode, string>): string {
+  buildDocumentXml(
+    document: DocumentNode,
+    headerFooterRelIds?: Map<HeaderFooterNode, string>,
+    hyperlinkRelIds?: Map<string, string>,
+  ): string {
     const lines: string[] = [
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
       '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">',
@@ -53,9 +61,9 @@ export class StandardWmlBuilder implements WmlBuilder {
 
       for (const block of section.children) {
         if (block.type === 'paragraph') {
-          lines.push(this.serializeParagraph(block));
+          lines.push(this.serializeParagraph(block, hyperlinkRelIds));
         } else if (block.type === 'table') {
-          lines.push(this.serializeTable(block));
+          lines.push(this.serializeTable(block, hyperlinkRelIds));
         } else if (block.type === 'drawing') {
           lines.push(this.serializeBlockDrawing(block));
         } else if (block.type === 'image') {
@@ -82,7 +90,7 @@ export class StandardWmlBuilder implements WmlBuilder {
     return lines.join('\n');
   }
 
-  buildHeaderXml(header: HeaderFooterNode): string {
+  buildHeaderXml(header: HeaderFooterNode, hyperlinkRelIds?: Map<string, string>): string {
     const lines: string[] = [
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
       '<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">',
@@ -90,9 +98,9 @@ export class StandardWmlBuilder implements WmlBuilder {
 
     for (const block of header.children) {
       if (block.type === 'paragraph') {
-        lines.push(this.serializeParagraph(block));
+        lines.push(this.serializeParagraph(block, hyperlinkRelIds));
       } else if (block.type === 'table') {
-        lines.push(this.serializeTable(block));
+        lines.push(this.serializeTable(block, hyperlinkRelIds));
       } else if (block.type === 'drawing') {
         lines.push(this.serializeBlockDrawing(block));
       } else if (block.type === 'image') {
@@ -108,7 +116,7 @@ export class StandardWmlBuilder implements WmlBuilder {
     return lines.join('\n');
   }
 
-  buildFooterXml(footer: HeaderFooterNode): string {
+  buildFooterXml(footer: HeaderFooterNode, hyperlinkRelIds?: Map<string, string>): string {
     const lines: string[] = [
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
       '<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">',
@@ -116,9 +124,9 @@ export class StandardWmlBuilder implements WmlBuilder {
 
     for (const block of footer.children) {
       if (block.type === 'paragraph') {
-        lines.push(this.serializeParagraph(block));
+        lines.push(this.serializeParagraph(block, hyperlinkRelIds));
       } else if (block.type === 'table') {
-        lines.push(this.serializeTable(block));
+        lines.push(this.serializeTable(block, hyperlinkRelIds));
       } else if (block.type === 'drawing') {
         lines.push(this.serializeBlockDrawing(block));
       } else if (block.type === 'image') {
@@ -134,15 +142,84 @@ export class StandardWmlBuilder implements WmlBuilder {
     return lines.join('\n');
   }
 
-  private serializeParagraph(p: ParagraphNode): string {
+  private serializeParagraph(p: ParagraphNode, hyperlinkRelIds?: Map<string, string>): string {
     const pPr = this.serializeParagraphProperties(p.style);
-    const runs = p.children.map((r) => this.serializeRun(r)).join('\n');
+    const content = this.serializeParagraphContent(p, hyperlinkRelIds);
 
-    if (pPr.length === 0 && runs.length === 0) {
+    if (pPr.length === 0 && content.length === 0) {
       return '    <w:p/>';
     }
 
-    return ['    <w:p>', pPr, runs, '    </w:p>'].filter(Boolean).join('\n');
+    return ['    <w:p>', pPr, content, '    </w:p>'].filter(Boolean).join('\n');
+  }
+
+  private serializeParagraphContent(p: ParagraphNode, hyperlinkRelIds?: Map<string, string>): string {
+    const pieces: string[] = [];
+    const runs = p.children;
+    let i = 0;
+
+    while (i < runs.length) {
+      const run = runs[i]!;
+      const hlink = run.hyperlink;
+
+      if (!hlink) {
+        pieces.push(this.serializeRun(run));
+        i++;
+      } else {
+        const group: RunNode[] = [];
+        while (i < runs.length && runs[i]!.hyperlink === hlink) {
+          group.push(runs[i]!);
+          i++;
+        }
+
+        const innerRuns = group.map((r) => this.serializeRun(r)).join('\n');
+        const tooltipAttr = hlink.tooltip ? ` w:tooltip="${escapeXml(hlink.tooltip)}"` : '';
+
+        if (hlink.url) {
+          const relId = hyperlinkRelIds?.get(hlink.url) ?? 'rIdLink';
+          pieces.push(
+            [
+              `      <w:hyperlink r:id="${relId}"${tooltipAttr} w:history="1">`,
+              innerRuns,
+              '      </w:hyperlink>',
+            ].join('\n'),
+          );
+        } else if (hlink.anchor) {
+          pieces.push(
+            [
+              `      <w:hyperlink w:anchor="${escapeXml(hlink.anchor)}"${tooltipAttr} w:history="1">`,
+              innerRuns,
+              '      </w:hyperlink>',
+            ].join('\n'),
+          );
+        } else {
+          pieces.push(innerRuns);
+        }
+      }
+    }
+
+    let content = pieces.filter(Boolean).join('\n');
+
+    if (p.bookmarkName) {
+      const bmId = Math.abs(this.hashCode(p.bookmarkName)) % 100000;
+      content = [
+        `      <w:bookmarkStart w:id="${bmId}" w:name="${escapeXml(p.bookmarkName)}"/>`,
+        content,
+        `      <w:bookmarkEnd w:id="${bmId}"/>`,
+      ]
+        .filter(Boolean)
+        .join('\n');
+    }
+
+    return content;
+  }
+
+  private hashCode(str: string): number {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+    }
+    return hash;
   }
 
   private serializeParagraphProperties(style?: ParagraphStyle): string {
@@ -377,22 +454,22 @@ export class StandardWmlBuilder implements WmlBuilder {
     return ['        <w:rPr>', ...inner, '        </w:rPr>'].join('\n');
   }
 
-  private serializeTable(table: TableNode): string {
-    const rows = table.rows.map((row) => this.serializeTableRow(row)).join('\n');
+  private serializeTable(table: TableNode, hyperlinkRelIds?: Map<string, string>): string {
+    const rows = table.rows.map((row) => this.serializeTableRow(row, hyperlinkRelIds)).join('\n');
     return ['    <w:tbl>', '      <w:tblPr/>', rows, '    </w:tbl>'].join('\n');
   }
 
-  private serializeTableRow(row: TableRowNode): string {
-    const cells = row.children.map((cell) => this.serializeTableCell(cell)).join('\n');
+  private serializeTableRow(row: TableRowNode, hyperlinkRelIds?: Map<string, string>): string {
+    const cells = row.children.map((cell) => this.serializeTableCell(cell, hyperlinkRelIds)).join('\n');
     return ['      <w:tr>', cells, '      </w:tr>'].join('\n');
   }
 
-  private serializeTableCell(cell: TableCellNode): string {
+  private serializeTableCell(cell: TableCellNode, hyperlinkRelIds?: Map<string, string>): string {
     const tcPr = this.serializeTableCellProperties(cell.style, cell.colSpan);
     const content = cell.children
       .map((child) => {
-        if (child.type === 'paragraph') return this.serializeParagraph(child);
-        if (child.type === 'table') return this.serializeTable(child);
+        if (child.type === 'paragraph') return this.serializeParagraph(child, hyperlinkRelIds);
+        if (child.type === 'table') return this.serializeTable(child, hyperlinkRelIds);
         if (child.type === 'image') return this.serializeBlockImage(child);
         return this.serializeBlockDrawing(child);
       })

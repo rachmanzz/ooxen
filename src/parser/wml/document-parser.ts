@@ -4,7 +4,7 @@ import { defaultXmlAdapter, type XmlNode } from '../xml-adapter.js';
 import type { ImageResolver } from '../dml/image-parser.js';
 import type { HeaderFooterResolver } from './header-footer-parser.js';
 import type { NumberingResolver } from './numbering-resolver.js';
-import { defaultParagraphParser, type ParagraphParser } from './paragraph-parser.js';
+import { defaultParagraphParser, type HyperlinkResolver, type ParagraphParser } from './paragraph-parser.js';
 import type { StyleResolver } from './style-resolver.js';
 import { defaultTableParser, type TableParser } from './table-parser.js';
 
@@ -19,6 +19,7 @@ export interface DocumentParser {
     numberingResolver?: NumberingResolver,
     imageResolver?: ImageResolver,
     headerFooterResolver?: HeaderFooterResolver,
+    hyperlinkResolver?: HyperlinkResolver,
   ): DocumentNode;
   parseDocumentXml(
     xmlString: string,
@@ -26,6 +27,7 @@ export interface DocumentParser {
     numberingResolver?: NumberingResolver,
     imageResolver?: ImageResolver,
     headerFooterResolver?: HeaderFooterResolver,
+    hyperlinkResolver?: HyperlinkResolver,
   ): DocumentNode;
 }
 
@@ -125,9 +127,10 @@ export class StandardDocumentParser implements DocumentParser {
     numberingResolver?: NumberingResolver,
     imageResolver?: ImageResolver,
     headerFooterResolver?: HeaderFooterResolver,
+    hyperlinkResolver?: HyperlinkResolver,
   ): DocumentNode {
     const rootNode = defaultXmlAdapter.parse(xmlString);
-    return this.parseDocument(rootNode, styleResolver, numberingResolver, imageResolver, headerFooterResolver);
+    return this.parseDocument(rootNode, styleResolver, numberingResolver, imageResolver, headerFooterResolver, hyperlinkResolver);
   }
 
   parseDocument(
@@ -136,6 +139,7 @@ export class StandardDocumentParser implements DocumentParser {
     numberingResolver?: NumberingResolver,
     imageResolver?: ImageResolver,
     headerFooterResolver?: HeaderFooterResolver,
+    hyperlinkResolver?: HyperlinkResolver,
   ): DocumentNode {
     // Find w:body
     let bodyNode: XmlNode | undefined;
@@ -165,7 +169,13 @@ export class StandardDocumentParser implements DocumentParser {
       const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
 
       if (tag === 'p') {
-        const paragraph = this.paragraphParser.parseParagraph(child, styleResolver, numberingResolver, imageResolver);
+        const paragraph = this.paragraphParser.parseParagraph(
+          child,
+          styleResolver,
+          numberingResolver,
+          imageResolver,
+          hyperlinkResolver,
+        );
         currentBlocks.push(paragraph);
 
         // Check if paragraph contains section break in pPr

@@ -48,13 +48,28 @@ export function coalesceRuns(runs: RunNode[]): RunNode[] {
     }
 
     const last = result[result.length - 1];
-    if (last && !last.drawing && !last.image && areTextStylesEqual(last.style, run.style)) {
+    const sameHyperlink = last?.hyperlink?.url === run.hyperlink?.url && last?.hyperlink?.anchor === run.hyperlink?.anchor;
+    const sameBookmark = last?.bookmarkName === run.bookmarkName;
+    const sameField = last?.field === run.field;
+
+    if (
+      last &&
+      !last.drawing &&
+      !last.image &&
+      areTextStylesEqual(last.style, run.style) &&
+      sameHyperlink &&
+      sameBookmark &&
+      sameField
+    ) {
       last.text += run.text;
     } else {
       result.push({
         type: 'run',
         text: run.text,
         style: run.style ? { ...run.style } : undefined,
+        hyperlink: run.hyperlink ? { ...run.hyperlink } : undefined,
+        bookmarkName: run.bookmarkName,
+        field: run.field,
       });
     }
   }
@@ -111,6 +126,9 @@ export function sliceParagraphRange(
         style: run.style ? { ...run.style } : undefined,
         drawing: run.drawing,
         image: run.image,
+        hyperlink: run.hyperlink ? { ...run.hyperlink } : undefined,
+        bookmarkName: run.bookmarkName,
+        field: run.field,
       });
     } else if (runStart >= start && runEnd <= end) {
       // Case 2: Run is completely inside the target range
@@ -120,6 +138,9 @@ export function sliceParagraphRange(
         style: { ...run.style, ...patchStyle },
         drawing: run.drawing,
         image: run.image,
+        hyperlink: run.hyperlink ? { ...run.hyperlink } : undefined,
+        bookmarkName: run.bookmarkName,
+        field: run.field,
       });
     } else {
       // Case 3: Partial overlap -> split into up to 3 segments
@@ -135,6 +156,9 @@ export function sliceParagraphRange(
           type: 'run',
           text: leftText,
           style: run.style ? { ...run.style } : undefined,
+          hyperlink: run.hyperlink ? { ...run.hyperlink } : undefined,
+          bookmarkName: run.bookmarkName,
+          field: run.field,
         });
       }
 
@@ -143,6 +167,9 @@ export function sliceParagraphRange(
           type: 'run',
           text: middleText,
           style: { ...run.style, ...patchStyle },
+          hyperlink: run.hyperlink ? { ...run.hyperlink } : undefined,
+          bookmarkName: run.bookmarkName,
+          field: run.field,
         });
       }
 
@@ -151,6 +178,9 @@ export function sliceParagraphRange(
           type: 'run',
           text: rightText,
           style: run.style ? { ...run.style } : undefined,
+          hyperlink: run.hyperlink ? { ...run.hyperlink } : undefined,
+          bookmarkName: run.bookmarkName,
+          field: run.field,
         });
       }
     }
