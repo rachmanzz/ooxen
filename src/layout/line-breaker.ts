@@ -51,8 +51,13 @@ export class StandardLineBreaker implements LineBreaker {
 
     const baseEffectiveWidth = Math.max(10, availableWidth - indentLeft - indentRight);
 
-    // 1. Tokenize runs into words and whitespace tokens
-    const tokens = this.tokenizeRuns(paragraph.children);
+    // 1. Tokenize runs into words and whitespace tokens (with numbering prefix if present)
+    const prefixText = paragraph.style?.numbering?.prefixText;
+    const runsToTokenize: RunNode[] = prefixText
+      ? [{ type: 'run', text: `${prefixText}\t`, style: paragraph.children[0]?.style }, ...paragraph.children]
+      : paragraph.children;
+
+    const tokens = this.tokenizeRuns(runsToTokenize);
     if (tokens.length === 0) {
       // Empty paragraph line
       const defaultSize = 11;

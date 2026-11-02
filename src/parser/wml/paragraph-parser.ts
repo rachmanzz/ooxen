@@ -1,6 +1,7 @@
 import type { DrawingShapeNode, ParagraphNode, RunNode } from '../../types/ast.js';
 import { parseDrawingNode } from '../dml/shape-parser.js';
 import type { XmlNode } from '../xml-adapter.js';
+import type { NumberingResolver } from './numbering-resolver.js';
 import { parseParagraphProperties, parseRunProperties, type StyleResolver } from './style-resolver.js';
 
 /**
@@ -8,12 +9,12 @@ import { parseParagraphProperties, parseRunProperties, type StyleResolver } from
  */
 
 export interface ParagraphParser {
-  parseParagraph(node: XmlNode, styleResolver?: StyleResolver): ParagraphNode;
+  parseParagraph(node: XmlNode, styleResolver?: StyleResolver, numberingResolver?: NumberingResolver): ParagraphNode;
   parseRun(node: XmlNode, inheritedStyle?: StyleResolver): RunNode;
 }
 
 export class StandardParagraphParser implements ParagraphParser {
-  parseParagraph(node: XmlNode, styleResolver?: StyleResolver): ParagraphNode {
+  parseParagraph(node: XmlNode, styleResolver?: StyleResolver, numberingResolver?: NumberingResolver): ParagraphNode {
     let styleId: string | undefined;
     let directPPrNode: XmlNode | undefined;
     const runs: RunNode[] = [];
@@ -44,6 +45,27 @@ export class StandardParagraphParser implements ParagraphParser {
     const baseStyle = styleResolver?.resolveParagraphStyle(styleId) ?? {};
     const directStyle = parseParagraphProperties(directPPrNode);
     const combinedStyle = { ...baseStyle, ...directStyle };
+
+    if (combinedStyle.numbering?.numId) {
+      const resolved = numberingResolver?.resolveNumbering(
+        combinedStyle.numbering.numId,
+        combinedStyle.numbering.level,
+      );
+      if (resolved) {
+        combinedStyle.numbering = {
+          numId: resolved.numId,
+          level: resolved.level,
+          format: resolved.format,
+          prefixText: resolved.prefixText,
+        };
+        if (resolved.indentLeftPt !== undefined && combinedStyle.indentLeftPt === undefined) {
+          combinedStyle.indentLeftPt = resolved.indentLeftPt;
+        }
+        if (resolved.hangingPt !== undefined && combinedStyle.firstLineIndentPt === undefined) {
+          combinedStyle.firstLineIndentPt = -resolved.hangingPt;
+        }
+      }
+    }
 
     return {
       type: 'paragraph',

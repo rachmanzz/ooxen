@@ -86,10 +86,41 @@ export class StandardOoxenWriter implements OoxenWriter {
       } else if (tag === 'svg') {
         const shape = this.parseSvgNode(node);
         if (shape) blocks.push(shape);
+      } else if (tag === 'ul' || tag === 'ol') {
+        const numId = tag === 'ul' ? 1 : 2;
+        this.parseHtmlList(node, numId, 0, blocks);
       }
     }
 
     return blocks;
+  }
+
+  private parseHtmlList(listNode: XmlNode, numId: number, level: number, outBlocks: BlockNode[]): void {
+    for (const child of listNode.children) {
+      const tag = child.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+      if (tag === 'li') {
+        const p = this.parseHtmlParagraph(child);
+        p.style = {
+          ...p.style,
+          numbering: {
+            numId,
+            level,
+          },
+        };
+        outBlocks.push(p);
+
+        for (const subChild of child.children) {
+          const subTag = subChild.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+          if (subTag === 'ul' || subTag === 'ol') {
+            const subNumId = subTag === 'ul' ? 1 : 2;
+            this.parseHtmlList(subChild, subNumId, level + 1, outBlocks);
+          }
+        }
+      } else if (tag === 'ul' || tag === 'ol') {
+        const subNumId = tag === 'ul' ? 1 : 2;
+        this.parseHtmlList(child, subNumId, level + 1, outBlocks);
+      }
+    }
   }
 
   private parseSvgNode(svgNode: XmlNode): DrawingShapeNode | undefined {

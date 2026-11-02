@@ -15,6 +15,13 @@ export interface TextStyle {
   backgroundColor?: string;
 }
 
+export interface ParagraphNumbering {
+  numId: number;
+  level: number;
+  format?: string; // 'decimal' | 'bullet' | 'lowerLetter' | 'upperLetter' | 'lowerRoman' | 'upperRoman'
+  prefixText?: string; // e.g. "1.", "•", "a)"
+}
+
 export interface ParagraphStyle {
   alignment?: TextAlignment;
   lineSpacingPt?: number;
@@ -23,6 +30,7 @@ export interface ParagraphStyle {
   indentLeftPt?: number;
   indentRightPt?: number;
   firstLineIndentPt?: number;
+  numbering?: ParagraphNumbering;
 }
 
 export interface TableCellStyle {

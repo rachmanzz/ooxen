@@ -1,6 +1,7 @@
 import { KNOWN_CONTENT_TYPES } from '../opc/content-types.js';
 import { createPackage, type OpcPackage } from '../opc/package.js';
 import { KNOWN_RELATIONSHIPS } from '../opc/relationships.js';
+import { defaultNumberingBuilder, type NumberingBuilder } from './numbering-builder.js';
 import { defaultStylesBuilder, type StylesBuilder } from './styles-builder.js';
 
 const textEncoder = new TextEncoder();
@@ -10,17 +11,22 @@ const textEncoder = new TextEncoder();
  */
 
 export interface PackageBuilder {
-  assemblePackage(documentXml: string, stylesXml?: string): OpcPackage;
+  assemblePackage(documentXml: string, customStylesXml?: string, customNumberingXml?: string): OpcPackage;
 }
 
 export class StandardPackageBuilder implements PackageBuilder {
   private stylesBuilder: StylesBuilder;
+  private numberingBuilder: NumberingBuilder;
 
-  constructor(stylesBuilder: StylesBuilder = defaultStylesBuilder) {
+  constructor(
+    stylesBuilder: StylesBuilder = defaultStylesBuilder,
+    numberingBuilder: NumberingBuilder = defaultNumberingBuilder,
+  ) {
     this.stylesBuilder = stylesBuilder;
+    this.numberingBuilder = numberingBuilder;
   }
 
-  assemblePackage(documentXml: string, customStylesXml?: string): OpcPackage {
+  assemblePackage(documentXml: string, customStylesXml?: string, customNumberingXml?: string): OpcPackage {
     const pkg = createPackage();
 
     // 1. Root Relationship to document.xml
@@ -50,6 +56,22 @@ export class StandardPackageBuilder implements PackageBuilder {
       contentType: KNOWN_CONTENT_TYPES.WML_STYLES,
       data: textEncoder.encode(stylesXml),
     });
+
+    // 4. Add numbering.xml if document contains numbering references or custom numbering provided
+    if (customNumberingXml || documentXml.includes('<w:numPr>')) {
+      const numXml = customNumberingXml ?? this.numberingBuilder.buildDefaultNumberingXml();
+      pkg.addRelationship('word/document.xml', {
+        id: 'rId3',
+        type: KNOWN_RELATIONSHIPS.NUMBERING,
+        target: 'numbering.xml',
+      });
+
+      pkg.setPart({
+        name: 'word/numbering.xml',
+        contentType: KNOWN_CONTENT_TYPES.WML_NUMBERING,
+        data: textEncoder.encode(numXml),
+      });
+    }
 
     return pkg;
   }

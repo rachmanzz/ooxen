@@ -1,6 +1,7 @@
 import type { BlockNode, DocumentNode, SectionNode, SectionProperties } from '../../types/ast.js';
 import { twipsToPt } from '../../types/common.js';
-import type { XmlNode } from '../xml-adapter.js';
+import { defaultXmlAdapter, type XmlNode } from '../xml-adapter.js';
+import type { NumberingResolver } from './numbering-resolver.js';
 import { defaultParagraphParser, type ParagraphParser } from './paragraph-parser.js';
 import type { StyleResolver } from './style-resolver.js';
 import { defaultTableParser, type TableParser } from './table-parser.js';
@@ -10,7 +11,8 @@ import { defaultTableParser, type TableParser } from './table-parser.js';
  */
 
 export interface DocumentParser {
-  parseDocument(rootNode: XmlNode, styleResolver?: StyleResolver): DocumentNode;
+  parseDocument(rootNode: XmlNode, styleResolver?: StyleResolver, numberingResolver?: NumberingResolver): DocumentNode;
+  parseDocumentXml(xmlString: string, styleResolver?: StyleResolver, numberingResolver?: NumberingResolver): DocumentNode;
 }
 
 export function parseSectionProperties(node?: XmlNode): SectionProperties {
@@ -58,7 +60,12 @@ export class StandardDocumentParser implements DocumentParser {
     this.tableParser = tableParser;
   }
 
-  parseDocument(rootNode: XmlNode, styleResolver?: StyleResolver): DocumentNode {
+  parseDocumentXml(xmlString: string, styleResolver?: StyleResolver, numberingResolver?: NumberingResolver): DocumentNode {
+    const rootNode = defaultXmlAdapter.parse(xmlString);
+    return this.parseDocument(rootNode, styleResolver, numberingResolver);
+  }
+
+  parseDocument(rootNode: XmlNode, styleResolver?: StyleResolver, numberingResolver?: NumberingResolver): DocumentNode {
     // Find w:body
     let bodyNode: XmlNode | undefined;
     if (rootNode.nodeName.toLowerCase().endsWith('body')) {
@@ -87,7 +94,7 @@ export class StandardDocumentParser implements DocumentParser {
       const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
 
       if (tag === 'p') {
-        const paragraph = this.paragraphParser.parseParagraph(child, styleResolver);
+        const paragraph = this.paragraphParser.parseParagraph(child, styleResolver, numberingResolver);
         currentBlocks.push(paragraph);
 
         // Check if paragraph contains section break in pPr
@@ -102,7 +109,7 @@ export class StandardDocumentParser implements DocumentParser {
           currentBlocks = [];
         }
       } else if (tag === 'tbl') {
-        const table = this.tableParser.parseTable(child, styleResolver);
+        const table = this.tableParser.parseTable(child, styleResolver, numberingResolver);
         currentBlocks.push(table);
       } else if (tag === 'sectpr') {
         // Final section properties for the body

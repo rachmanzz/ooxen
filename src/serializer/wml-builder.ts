@@ -87,6 +87,17 @@ export class StandardWmlBuilder implements WmlBuilder {
       inner.push(`      <w:jc w:val="${jcVal}"/>`);
     }
 
+    if (style.numbering) {
+      inner.push(
+        [
+          '      <w:numPr>',
+          `        <w:ilvl w:val="${style.numbering.level}"/>`,
+          `        <w:numId w:val="${style.numbering.numId}"/>`,
+          '      </w:numPr>',
+        ].join('\n')
+      );
+    }
+
     if (style.spaceBeforePt !== undefined || style.spaceAfterPt !== undefined || style.lineSpacingPt !== undefined) {
       const attrs: string[] = [];
       if (style.spaceBeforePt !== undefined) attrs.push(`w:before="${Math.round(ptToTwips(style.spaceBeforePt))}"`);

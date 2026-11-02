@@ -1,6 +1,7 @@
-import type { ParagraphNode, TableCellNode, TableNode, TableRowNode } from '../../types/ast.js';
+import type { BlockNode, TableCellNode, TableNode, TableRowNode } from '../../types/ast.js';
 import type { TableCellStyle } from '../../types/style.js';
 import type { XmlNode } from '../xml-adapter.js';
+import type { NumberingResolver } from './numbering-resolver.js';
 import { defaultParagraphParser, type ParagraphParser } from './paragraph-parser.js';
 import type { StyleResolver } from './style-resolver.js';
 
@@ -9,7 +10,7 @@ import type { StyleResolver } from './style-resolver.js';
  */
 
 export interface TableParser {
-  parseTable(node: XmlNode, styleResolver?: StyleResolver): TableNode;
+  parseTable(node: XmlNode, styleResolver?: StyleResolver, numberingResolver?: NumberingResolver): TableNode;
 }
 
 export class StandardTableParser implements TableParser {
@@ -19,13 +20,13 @@ export class StandardTableParser implements TableParser {
     this.paragraphParser = paragraphParser;
   }
 
-  parseTable(node: XmlNode, styleResolver?: StyleResolver): TableNode {
+  parseTable(node: XmlNode, styleResolver?: StyleResolver, numberingResolver?: NumberingResolver): TableNode {
     const rows: TableRowNode[] = [];
 
     for (const child of node.children) {
       const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
       if (tag === 'tr') {
-        rows.push(this.parseRow(child, styleResolver));
+        rows.push(this.parseRow(child, styleResolver, numberingResolver));
       }
     }
 
@@ -35,13 +36,13 @@ export class StandardTableParser implements TableParser {
     };
   }
 
-  private parseRow(node: XmlNode, styleResolver?: StyleResolver): TableRowNode {
+  private parseRow(node: XmlNode, styleResolver?: StyleResolver, numberingResolver?: NumberingResolver): TableRowNode {
     const cells: TableCellNode[] = [];
 
     for (const child of node.children) {
       const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
       if (tag === 'tc') {
-        cells.push(this.parseCell(child, styleResolver));
+        cells.push(this.parseCell(child, styleResolver, numberingResolver));
       }
     }
 
@@ -51,10 +52,10 @@ export class StandardTableParser implements TableParser {
     };
   }
 
-  private parseCell(node: XmlNode, styleResolver?: StyleResolver): TableCellNode {
+  private parseCell(node: XmlNode, styleResolver?: StyleResolver, numberingResolver?: NumberingResolver): TableCellNode {
     let colSpan: number | undefined;
     let style: TableCellStyle | undefined;
-    const children: (ParagraphNode | TableNode)[] = [];
+    const children: BlockNode[] = [];
 
     for (const child of node.children) {
       const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
@@ -69,9 +70,9 @@ export class StandardTableParser implements TableParser {
           }
         }
       } else if (tag === 'p') {
-        children.push(this.paragraphParser.parseParagraph(child, styleResolver));
+        children.push(this.paragraphParser.parseParagraph(child, styleResolver, numberingResolver));
       } else if (tag === 'tbl') {
-        children.push(this.parseTable(child, styleResolver));
+        children.push(this.parseTable(child, styleResolver, numberingResolver));
       }
     }
 

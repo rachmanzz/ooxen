@@ -86,8 +86,12 @@ export class StandardHtmlRenderer implements HtmlRenderer {
     const cssObj = this.styleMapper.paragraphStyleToCss(paragraph.style);
     const styleAttr = Object.keys(cssObj).length > 0 ? ` style="${escapeXml(this.styleMapper.toCssString(cssObj))}"` : '';
 
+    const prefixHtml = paragraph.style?.numbering?.prefixText
+      ? `<span class="ooxen-bullet" style="display: inline-block; min-width: 1.5em;">${escapeXml(paragraph.style.numbering.prefixText)} </span>`
+      : '';
+
     const runsHtml = paragraph.children.map((run) => this.renderRun(run)).join('');
-    return `    <p class="ooxen-p"${styleAttr}>${runsHtml}</p>`;
+    return `    <p class="ooxen-p"${styleAttr}>${prefixHtml}${runsHtml}</p>`;
   }
 
   private renderRun(run: RunNode): string {

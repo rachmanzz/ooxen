@@ -104,10 +104,20 @@ export function parseParagraphProperties(node?: XmlNode): ParagraphStyle {
         const left = child.attributes['w:left'] ?? child.attributes['left'];
         const right = child.attributes['w:right'] ?? child.attributes['right'];
         const firstLine = child.attributes['w:firstline'] ?? child.attributes['firstLine'];
+        const hanging = child.attributes['w:hanging'] ?? child.attributes['hanging'];
 
         if (left) style.indentLeftPt = twipsToPt(Number(left));
         if (right) style.indentRightPt = twipsToPt(Number(right));
         if (firstLine) style.firstLineIndentPt = twipsToPt(Number(firstLine));
+        else if (hanging) style.firstLineIndentPt = -twipsToPt(Number(hanging));
+        break;
+      }
+      case 'numpr': {
+        const ilvlNode = child.children.find((c) => c.nodeName.toLowerCase().endsWith('ilvl'));
+        const numIdNode = child.children.find((c) => c.nodeName.toLowerCase().endsWith('numid'));
+        const ilvl = Number.parseInt(ilvlNode?.attributes['w:val'] ?? ilvlNode?.attributes['val'] ?? '0', 10);
+        const numId = Number.parseInt(numIdNode?.attributes['w:val'] ?? numIdNode?.attributes['val'] ?? '0', 10);
+        style.numbering = { numId, level: ilvl };
         break;
       }
     }

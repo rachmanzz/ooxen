@@ -23,6 +23,7 @@ export * from './parser/wml/document-parser.js';
 export * from './parser/wml/paragraph-parser.js';
 export * from './parser/wml/table-parser.js';
 export * from './parser/wml/style-resolver.js';
+export * from './parser/wml/numbering-resolver.js';
 export * from './parser/dml/shape-parser.js';
 
 // Layout
@@ -46,4 +47,5 @@ export * from './renderer/html/style-mapper.js';
 export * from './serializer/ooxen-writer.js';
 export * from './serializer/wml-builder.js';
 export * from './serializer/styles-builder.js';
+export * from './serializer/numbering-builder.js';
 export * from './serializer/package-builder.js';
