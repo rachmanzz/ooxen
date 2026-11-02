@@ -32,6 +32,9 @@ export interface ParagraphStyle {
   indentRightPt?: number;
   firstLineIndentPt?: number;
   numbering?: ParagraphNumbering;
+  pageBreakBefore?: boolean;
+  keepNext?: boolean;
+  keepLines?: boolean;
 }
 
 export interface TableCellStyle {

@@ -66,6 +66,18 @@ export class StandardStyleMapper implements StyleMapper {
     if (style.lineSpacingPt) {
       css['line-height'] = `${style.lineSpacingPt}pt`;
     }
+    if (style.pageBreakBefore) {
+      css['break-before'] = 'page';
+      css['page-break-before'] = 'always';
+    }
+    if (style.keepNext) {
+      css['break-after'] = 'avoid';
+      css['page-break-after'] = 'avoid';
+    }
+    if (style.keepLines) {
+      css['break-inside'] = 'avoid';
+      css['page-break-inside'] = 'avoid';
+    }
 
     return css;
   }

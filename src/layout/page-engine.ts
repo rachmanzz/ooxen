@@ -117,8 +117,22 @@ export class StandardPageEngine implements PageEngine {
         },
       };
 
-      for (const block of section.children) {
+      for (let bIndex = 0; bIndex < section.children.length; bIndex++) {
+        const block = section.children[bIndex]!;
         if (block.type === 'paragraph') {
+          if (block.style?.pageBreakBefore && (currentY > 0 || currentLines.length > 0 || currentColumnIndex > 0)) {
+            emitPage();
+          }
+
+          if (block.style?.keepNext && bIndex + 1 < section.children.length && (currentY > 0 || currentLines.length > 0)) {
+            const curLines = this.lineBreaker.breakParagraph(block, getActiveColWidth());
+            const curHeight = curLines.reduce((acc, l) => acc + l.bounds.height, 0) + (block.style?.spaceBeforePt ?? 0);
+            const nextEstimatedFirstLineHeight = 16;
+            if (currentY + curHeight + nextEstimatedFirstLineHeight > contentHeight) {
+              onColumnOrPageOverflow();
+            }
+          }
+
           this.layoutParagraph(
             block,
             getActiveColWidth(),
@@ -133,6 +147,12 @@ export class StandardPageEngine implements PageEngine {
             () => currentY,
             (newY) => {
               currentY = newY;
+            },
+            () => {
+              emitPage();
+            },
+            () => {
+              onColumnOrPageOverflow();
             },
           );
         } else if (block.type === 'table') {
@@ -364,6 +384,8 @@ export class StandardPageEngine implements PageEngine {
     onPageOverflow: () => void,
     getY: () => number,
     setY: (y: number) => void,
+    onPageBreak?: () => void,
+    onColumnBreak?: () => void,
   ): void {
     const spaceBefore = p.style?.spaceBeforePt ?? 0;
     const spaceAfter = p.style?.spaceAfterPt ?? 0;
@@ -380,7 +402,17 @@ export class StandardPageEngine implements PageEngine {
 
     const lines = this.lineBreaker.breakParagraph(p, contentWidth);
 
-    for (const line of lines) {
+    // If keepLines is requested, check if all lines fit on current page/column
+    if (p.style?.keepLines && y > 0 && lines.length > 1) {
+      const totalParagraphHeight = lines.reduce((acc, l) => acc + l.bounds.height, 0);
+      if (y + totalParagraphHeight > contentHeight) {
+        onPageOverflow();
+        y = 0;
+      }
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
       if (y + line.bounds.height > contentHeight && y > 0) {
         onPageOverflow();
         y = 0;
@@ -396,10 +428,28 @@ export class StandardPageEngine implements PageEngine {
         },
         fragments: line.fragments,
         baseline: line.baseline,
+        breakType: line.breakType,
       };
 
       pushLine(pageLine);
       y += line.bounds.height;
+
+      // Handle explicit break on the line
+      if (line.breakType === 'page') {
+        if (onPageBreak) {
+          onPageBreak();
+        } else {
+          onPageOverflow();
+        }
+        y = 0;
+      } else if (line.breakType === 'column') {
+        if (onColumnBreak) {
+          onColumnBreak();
+        } else {
+          onPageOverflow();
+        }
+        y = 0;
+      }
     }
 
     if (spaceAfter > 0) {

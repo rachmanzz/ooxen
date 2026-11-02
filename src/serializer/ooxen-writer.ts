@@ -565,6 +565,15 @@ export class StandardOoxenWriter implements OoxenWriter {
     if (style['text-align'] === 'center' || style['text-align'] === 'right' || style['text-align'] === 'justify') {
       pStyle.alignment = style['text-align'];
     }
+    if (style['page-break-before'] === 'always' || style['break-before'] === 'page') {
+      pStyle.pageBreakBefore = true;
+    }
+    if (style['page-break-after'] === 'avoid' || style['break-after'] === 'avoid') {
+      pStyle.keepNext = true;
+    }
+    if (style['page-break-inside'] === 'avoid' || style['break-inside'] === 'avoid') {
+      pStyle.keepLines = true;
+    }
 
     const runs: RunNode[] = [];
     for (const child of pNode.children) {
@@ -685,7 +694,14 @@ export class StandardOoxenWriter implements OoxenWriter {
           });
         }
       } else if (tag === 'br') {
-        runs.push({ type: 'run', text: '\n' });
+        const brType = child.attributes['type'] ?? child.attributes['class'];
+        if (brType?.includes('page')) {
+          runs.push({ type: 'run', text: '', breakType: 'page' });
+        } else if (brType?.includes('column')) {
+          runs.push({ type: 'run', text: '', breakType: 'column' });
+        } else {
+          runs.push({ type: 'run', text: '\n' });
+        }
       }
     }
 
@@ -731,6 +747,13 @@ export class StandardOoxenWriter implements OoxenWriter {
       field = 'NUMPAGES';
     }
 
+    let breakType: 'page' | 'column' | undefined;
+    if (className.includes('ooxen-page-break') || spanCss['break-before'] === 'page' || spanCss['page-break-before'] === 'always') {
+      breakType = 'page';
+    } else if (className.includes('ooxen-column-break') || spanCss['break-before'] === 'column') {
+      breakType = 'column';
+    }
+
     const bm = bookmarkName ?? spanNode.attributes['id'] ?? spanNode.attributes['name'];
 
     return {
@@ -742,6 +765,7 @@ export class StandardOoxenWriter implements OoxenWriter {
       field,
       hyperlink,
       bookmarkName: bm,
+      breakType,
     };
   }
 

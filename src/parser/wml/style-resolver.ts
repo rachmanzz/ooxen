@@ -126,6 +126,18 @@ export function parseParagraphProperties(node?: XmlNode): ParagraphStyle {
         style.numbering = { numId, level: ilvl };
         break;
       }
+      case 'pagebreakbefore': {
+        style.pageBreakBefore = val === undefined || val === 'true' || val === '1' || val === 'on';
+        break;
+      }
+      case 'keepnext': {
+        style.keepNext = val === undefined || val === 'true' || val === '1' || val === 'on';
+        break;
+      }
+      case 'keeplines': {
+        style.keepLines = val === undefined || val === 'true' || val === '1' || val === 'on';
+        break;
+      }
     }
   }
 

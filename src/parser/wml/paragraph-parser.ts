@@ -218,6 +218,7 @@ export class StandardParagraphParser implements ParagraphParser {
     let footnoteRef: FootnoteReference | undefined;
     let isFootnoteRefMark: boolean | undefined;
     let commentId: string | undefined;
+    let breakType: 'page' | 'column' | undefined;
 
     for (const child of node.children) {
       const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
@@ -240,7 +241,12 @@ export class StandardParagraphParser implements ParagraphParser {
           field = instr;
         }
       } else if (tag === 'br') {
-        text += '\n';
+        const brType = (child.attributes['w:type'] ?? child.attributes['type'] ?? '').toLowerCase();
+        if (brType === 'page' || brType === 'column') {
+          breakType = brType;
+        } else {
+          text += '\n';
+        }
       } else if (tag === 'tab') {
         text += '\t';
       } else if (tag === 'footnotereference') {
@@ -287,6 +293,7 @@ export class StandardParagraphParser implements ParagraphParser {
       footnoteRef,
       isFootnoteRefMark,
       commentId,
+      breakType,
     };
   }
 }

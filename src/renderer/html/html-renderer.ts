@@ -252,6 +252,12 @@ export class StandardHtmlRenderer implements HtmlRenderer {
       outHtml = `<a class="ooxen-link"${href}${title}>${spanHtml}</a>`;
     }
 
+    if (run.breakType === 'page') {
+      outHtml = `${outHtml}<span class="ooxen-page-break" style="break-before: page; page-break-before: always;"></span>`;
+    } else if (run.breakType === 'column') {
+      outHtml = `${outHtml}<span class="ooxen-column-break" style="break-before: column;"></span>`;
+    }
+
     if (run.commentId) {
       return `<mark class="ooxen-comment" data-comment-id="${escapeXml(run.commentId)}">${outHtml}</mark>`;
     }

@@ -305,6 +305,16 @@ export class StandardWmlBuilder implements WmlBuilder {
       inner.push(`      <w:ind ${attrs.join(' ')}/>`);
     }
 
+    if (style.pageBreakBefore) {
+      inner.push('      <w:pageBreakBefore/>');
+    }
+    if (style.keepNext) {
+      inner.push('      <w:keepNext/>');
+    }
+    if (style.keepLines) {
+      inner.push('      <w:keepLines/>');
+    }
+
     if (inner.length === 0) return '';
     return ['      <w:pPr>', ...inner, '      </w:pPr>'].join('\n');
   }
@@ -335,8 +345,13 @@ export class StandardWmlBuilder implements WmlBuilder {
         : `      <w:endnoteReference w:id="${r.footnoteRef.id}"/>`
       : '';
     const footnoteMarkXml = r.isFootnoteRefMark ? '      <w:footnoteRef/>' : '';
+    const breakXml = r.breakType
+      ? r.breakType === 'page'
+        ? '      <w:br w:type="page"/>'
+        : '      <w:br w:type="column"/>'
+      : '';
 
-    if (textPieces.length === 0 && !rPr && !drawingXml && !imageXml && !footnoteRefXml && !footnoteMarkXml) {
+    if (textPieces.length === 0 && !rPr && !drawingXml && !imageXml && !footnoteRefXml && !footnoteMarkXml && !breakXml) {
       return '';
     }
 
@@ -348,6 +363,7 @@ export class StandardWmlBuilder implements WmlBuilder {
       imageXml,
       footnoteRefXml,
       footnoteMarkXml,
+      breakXml,
       '      </w:r>',
     ]
       .filter(Boolean)

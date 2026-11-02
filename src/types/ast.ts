@@ -89,6 +89,7 @@ export interface RunNode extends BaseASTNode {
   footnoteRef?: FootnoteReference;
   isFootnoteRefMark?: boolean;
   commentId?: string;
+  breakType?: 'page' | 'column';
 }
 
 export interface ParagraphNode extends BaseASTNode {
