@@ -27,6 +27,8 @@ export const KNOWN_CONTENT_TYPES = {
   WML_NUMBERING: 'application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml',
   WML_HEADER: 'application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml',
   WML_FOOTER: 'application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml',
+  WML_FOOTNOTES: 'application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml',
+  WML_ENDNOTES: 'application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml',
   CORE_PROPERTIES: 'application/vnd.openxmlformats-package.core-properties+xml',
   EXTENDED_PROPERTIES: 'application/vnd.openxmlformats-officedocument.extended-properties+xml',
 } as const;

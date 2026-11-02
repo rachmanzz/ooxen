@@ -39,6 +39,8 @@ export interface WmlBuilder {
   ): string;
   buildHeaderXml(header: HeaderFooterNode, hyperlinkRelIds?: Map<string, string>): string;
   buildFooterXml(footer: HeaderFooterNode, hyperlinkRelIds?: Map<string, string>): string;
+  buildParagraphXml(paragraph: ParagraphNode, hyperlinkRelIds?: Map<string, string>): string;
+  buildTableXml(table: TableNode, hyperlinkRelIds?: Map<string, string>): string;
 }
 
 export class StandardWmlBuilder implements WmlBuilder {
@@ -140,6 +142,14 @@ export class StandardWmlBuilder implements WmlBuilder {
 
     lines.push('</w:ftr>');
     return lines.join('\n');
+  }
+
+  buildParagraphXml(paragraph: ParagraphNode, hyperlinkRelIds?: Map<string, string>): string {
+    return this.serializeParagraph(paragraph, hyperlinkRelIds);
+  }
+
+  buildTableXml(table: TableNode, hyperlinkRelIds?: Map<string, string>): string {
+    return this.serializeTable(table, hyperlinkRelIds);
   }
 
   private serializeParagraph(p: ParagraphNode, hyperlinkRelIds?: Map<string, string>): string {
@@ -282,12 +292,29 @@ export class StandardWmlBuilder implements WmlBuilder {
 
     const drawingXml = r.drawing ? this.serializeDrawing(r.drawing) : '';
     const imageXml = r.image ? this.serializeImage(r.image) : '';
+    const footnoteRefXml = r.footnoteRef
+      ? r.footnoteRef.kind === 'footnote'
+        ? `      <w:footnoteReference w:id="${r.footnoteRef.id}"/>`
+        : `      <w:endnoteReference w:id="${r.footnoteRef.id}"/>`
+      : '';
+    const footnoteMarkXml = r.isFootnoteRefMark ? '      <w:footnoteRef/>' : '';
 
-    if (textPieces.length === 0 && !rPr && !drawingXml && !imageXml) {
+    if (textPieces.length === 0 && !rPr && !drawingXml && !imageXml && !footnoteRefXml && !footnoteMarkXml) {
       return '';
     }
 
-    const runXml = ['      <w:r>', rPr, ...textPieces, drawingXml, imageXml, '      </w:r>'].filter(Boolean).join('\n');
+    const runXml = [
+      '      <w:r>',
+      rPr,
+      ...textPieces,
+      drawingXml,
+      imageXml,
+      footnoteRefXml,
+      footnoteMarkXml,
+      '      </w:r>',
+    ]
+      .filter(Boolean)
+      .join('\n');
 
     if (r.field) {
       return [
@@ -448,6 +475,9 @@ export class StandardWmlBuilder implements WmlBuilder {
     }
     if (style.backgroundColor) {
       inner.push(`        <w:shd w:fill="${cleanHexColor(style.backgroundColor)}"/>`);
+    }
+    if (style.verticalAlign) {
+      inner.push(`        <w:vertAlign w:val="${style.verticalAlign}"/>`);
     }
 
     if (inner.length === 0) return '';

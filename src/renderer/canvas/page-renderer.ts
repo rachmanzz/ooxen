@@ -58,7 +58,19 @@ export class StandardPageRenderer implements PageRenderer {
     // 4. Render body lines
     this.renderLines(page.lines, target);
 
-    // 5. Render footer lines if present
+    // 5. Render footnote lines if present
+    if (page.footnoteLines && page.footnoteLines.length > 0) {
+      const topY = page.footnoteLines[0]!.bounds.y;
+      // Draw standard footnote separator rule (100pt wide line)
+      this.primitives.drawRect(
+        target,
+        { x: page.margins.left, y: topY - 6, width: 100, height: 0.75 },
+        '#000000',
+      );
+      this.renderLines(page.footnoteLines, target);
+    }
+
+    // 6. Render footer lines if present
     if (page.footerLines) {
       this.renderLines(page.footerLines, target);
     }

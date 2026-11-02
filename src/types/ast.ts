@@ -16,7 +16,9 @@ export type ASTNodeType =
   | 'drawing'
   | 'image'
   | 'header'
-  | 'footer';
+  | 'footer'
+  | 'footnote'
+  | 'endnote';
 
 export interface BaseASTNode {
   type: ASTNodeType;
@@ -68,6 +70,12 @@ export interface HyperlinkInfo {
   tooltip?: string;
 }
 
+export interface FootnoteReference {
+  id: number;
+  kind: 'footnote' | 'endnote';
+  mark?: string;
+}
+
 export interface RunNode extends BaseASTNode {
   type: 'run';
   text: string;
@@ -77,6 +85,8 @@ export interface RunNode extends BaseASTNode {
   field?: 'PAGE' | 'NUMPAGES' | string;
   hyperlink?: HyperlinkInfo;
   bookmarkName?: string;
+  footnoteRef?: FootnoteReference;
+  isFootnoteRefMark?: boolean;
 }
 
 export interface ParagraphNode extends BaseASTNode {
@@ -161,8 +171,18 @@ export interface DocumentMetadata {
   lines?: number;
 }
 
+export interface FootnoteNode extends BaseASTNode {
+  type: 'footnote' | 'endnote';
+  id: number;
+  kind: 'footnote' | 'endnote';
+  typeCategory?: 'normal' | 'separator' | 'continuationSeparator';
+  children: BlockNode[];
+}
+
 export interface DocumentNode extends BaseASTNode {
   type: 'document';
   sections: SectionNode[];
   metadata?: DocumentMetadata;
+  footnotes?: FootnoteNode[];
+  endnotes?: FootnoteNode[];
 }

@@ -1,4 +1,4 @@
-import type { DocumentNode, HeaderFooterNode, ParagraphNode, SectionNode, TableNode } from '../types/ast.js';
+import type { DocumentNode, FootnoteNode, HeaderFooterNode, ParagraphNode, SectionNode, TableNode } from '../types/ast.js';
 import type { Margins, Size } from '../types/common.js';
 import { defaultLineBreaker, type LayoutLine, type LineBreaker } from './line-breaker.js';
 
@@ -13,6 +13,7 @@ export interface PageLayout {
   lines: LayoutLine[];
   headerLines?: LayoutLine[];
   footerLines?: LayoutLine[];
+  footnoteLines?: LayoutLine[];
 }
 
 export interface PageEngine {
@@ -176,9 +177,66 @@ export class StandardPageEngine implements PageEngine {
         const footerY = page.size.height - footerDist - 16;
         page.footerLines = this.layoutHeaderFooter(footerNode, contentWidth, footerY, page.margins, page.pageIndex, totalPages);
       }
+
+      // 3. Resolve footnotes referenced on this page
+      if (document.footnotes && document.footnotes.length > 0) {
+        const referencedIds = new Set<number>();
+        for (const line of page.lines) {
+          for (const frag of line.fragments) {
+            if (frag.footnoteRef && frag.footnoteRef.kind === 'footnote') {
+              referencedIds.add(frag.footnoteRef.id);
+            }
+          }
+        }
+
+        if (referencedIds.size > 0) {
+          const matchingFootnotes = document.footnotes.filter((fn) => referencedIds.has(fn.id));
+          if (matchingFootnotes.length > 0) {
+            page.footnoteLines = this.layoutFootnotes(matchingFootnotes, contentWidth, page);
+          }
+        }
+      }
     }
 
     return pages;
+  }
+
+  private layoutFootnotes(footnotes: FootnoteNode[], contentWidth: number, page: PageLayout): LayoutLine[] {
+    const rawLines: LayoutLine[] = [];
+    let totalHeight = 0;
+
+    for (const fn of footnotes) {
+      for (const block of fn.children) {
+        if (block.type === 'paragraph') {
+          const pLines = this.lineBreaker.breakParagraph(block, contentWidth);
+          for (const l of pLines) {
+            rawLines.push(l);
+            totalHeight += l.bounds.height;
+          }
+        }
+      }
+    }
+
+    const contentBottomY = page.size.height - page.margins.bottom;
+    const startY = contentBottomY - totalHeight;
+    let currentY = 0;
+
+    const positionedLines: LayoutLine[] = [];
+    for (const line of rawLines) {
+      positionedLines.push({
+        bounds: {
+          x: page.margins.left + line.bounds.x,
+          y: startY + currentY + line.bounds.y,
+          width: line.bounds.width,
+          height: line.bounds.height,
+        },
+        baseline: line.baseline,
+        fragments: line.fragments,
+      });
+      currentY += line.bounds.height;
+    }
+
+    return positionedLines;
   }
 
   private layoutHeaderFooter(

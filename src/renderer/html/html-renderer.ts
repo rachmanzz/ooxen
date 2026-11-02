@@ -82,7 +82,36 @@ export class StandardHtmlRenderer implements HtmlRenderer {
 
   renderToHtmlString(document: DocumentNode): string {
     const sectionsHtml = document.sections.map((s) => this.renderSection(s)).join('\n');
-    const articleHtml = `<article class="ooxen-document" xmlns="http://www.w3.org/1999/xhtml">\n${sectionsHtml}\n</article>`;
+
+    let footnotesHtml = '';
+    if (document.footnotes && document.footnotes.length > 0) {
+      const validNotes = document.footnotes.filter((fn) => fn.id > 0);
+      if (validNotes.length > 0) {
+        const items = validNotes
+          .map((fn) => {
+            const inner = fn.children.map((b) => this.renderBlock(b)).join('\n');
+            return `      <li id="fn-${fn.id}">\n${inner}\n      </li>`;
+          })
+          .join('\n');
+        footnotesHtml = `\n    <aside class="ooxen-footnotes">\n      <hr class="ooxen-footnote-separator" />\n      <ol>\n${items}\n      </ol>\n    </aside>`;
+      }
+    }
+
+    let endnotesHtml = '';
+    if (document.endnotes && document.endnotes.length > 0) {
+      const validNotes = document.endnotes.filter((en) => en.id > 0);
+      if (validNotes.length > 0) {
+        const items = validNotes
+          .map((en) => {
+            const inner = en.children.map((b) => this.renderBlock(b)).join('\n');
+            return `      <li id="en-${en.id}">\n${inner}\n      </li>`;
+          })
+          .join('\n');
+        endnotesHtml = `\n    <aside class="ooxen-endnotes">\n      <hr class="ooxen-endnote-separator" />\n      <ol>\n${items}\n      </ol>\n    </aside>`;
+      }
+    }
+
+    const articleHtml = `<article class="ooxen-document" xmlns="http://www.w3.org/1999/xhtml">\n${sectionsHtml}${footnotesHtml}${endnotesHtml}\n</article>`;
 
     if (!document.metadata) {
       return articleHtml;
@@ -183,6 +212,13 @@ export class StandardHtmlRenderer implements HtmlRenderer {
     const fieldClass = run.field ? ` ooxen-field-${run.field.toLowerCase()}` : '';
 
     const spanHtml = `<span class="ooxen-r${fieldClass}"${idAttr}${styleAttr}>${escaped}${shapeSvg}${imageHtml}</span>`;
+
+    if (run.footnoteRef) {
+      const refKind = run.footnoteRef.kind;
+      const prefix = refKind === 'footnote' ? 'fn' : 'en';
+      const mark = run.footnoteRef.mark ?? run.footnoteRef.id;
+      return `<sup class="ooxen-${refKind}-ref"><a href="#${prefix}-${run.footnoteRef.id}">[${mark}]</a></sup>`;
+    }
 
     if (run.hyperlink) {
       const href = run.hyperlink.url

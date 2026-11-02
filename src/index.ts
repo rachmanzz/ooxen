@@ -28,6 +28,7 @@ export * from './parser/wml/header-footer-parser.js';
 export * from './parser/dml/shape-parser.js';
 export * from './parser/dml/image-parser.js';
 export * from './parser/metadata/metadata-parser.js';
+export * from './parser/wml/footnote-parser.js';
 
 // Layout
 export * from './layout/page-engine.js';
@@ -52,4 +53,5 @@ export * from './serializer/wml-builder.js';
 export * from './serializer/styles-builder.js';
 export * from './serializer/numbering-builder.js';
 export * from './serializer/metadata-builder.js';
+export * from './serializer/footnote-builder.js';
 export * from './serializer/package-builder.js';

@@ -1,7 +1,8 @@
 import { KNOWN_CONTENT_TYPES } from '../opc/content-types.js';
 import { createPackage, type OpcPackage } from '../opc/package.js';
 import { KNOWN_RELATIONSHIPS, type OpcRelationship } from '../opc/relationships.js';
-import type { DocumentMetadata } from '../types/ast.js';
+import type { DocumentMetadata, FootnoteNode } from '../types/ast.js';
+import { defaultFootnoteBuilder, type FootnoteBuilder } from './footnote-builder.js';
 import { defaultMetadataBuilder, type MetadataBuilder } from './metadata-builder.js';
 import { defaultNumberingBuilder, type NumberingBuilder } from './numbering-builder.js';
 import { defaultStylesBuilder, type StylesBuilder } from './styles-builder.js';
@@ -35,6 +36,10 @@ export interface PackageBuilder {
     headerFooterParts?: HeaderFooterPart[],
     externalRelationships?: OpcRelationship[],
     metadata?: DocumentMetadata,
+    footnotes?: FootnoteNode[],
+    endnotes?: FootnoteNode[],
+    customFootnotesXml?: string,
+    customEndnotesXml?: string,
   ): OpcPackage;
 }
 
@@ -42,15 +47,18 @@ export class StandardPackageBuilder implements PackageBuilder {
   private stylesBuilder: StylesBuilder;
   private numberingBuilder: NumberingBuilder;
   private metadataBuilder: MetadataBuilder;
+  private footnoteBuilder: FootnoteBuilder;
 
   constructor(
     stylesBuilder: StylesBuilder = defaultStylesBuilder,
     numberingBuilder: NumberingBuilder = defaultNumberingBuilder,
     metadataBuilder: MetadataBuilder = defaultMetadataBuilder,
+    footnoteBuilder: FootnoteBuilder = defaultFootnoteBuilder,
   ) {
     this.stylesBuilder = stylesBuilder;
     this.numberingBuilder = numberingBuilder;
     this.metadataBuilder = metadataBuilder;
+    this.footnoteBuilder = footnoteBuilder;
   }
 
   assemblePackage(
@@ -61,6 +69,10 @@ export class StandardPackageBuilder implements PackageBuilder {
     headerFooterParts: HeaderFooterPart[] = [],
     externalRelationships: OpcRelationship[] = [],
     metadata?: DocumentMetadata,
+    footnotes?: FootnoteNode[],
+    endnotes?: FootnoteNode[],
+    customFootnotesXml?: string,
+    customEndnotesXml?: string,
   ): OpcPackage {
     const pkg = createPackage();
 
@@ -145,7 +157,37 @@ export class StandardPackageBuilder implements PackageBuilder {
       pkg.addRelationship('word/document.xml', rel);
     }
 
-    // 8. Add document metadata (docProps/core.xml & docProps/app.xml) if provided
+    // 8. Add footnotes if provided or custom XML provided
+    if (customFootnotesXml || (footnotes && footnotes.length > 0)) {
+      const fnXml = customFootnotesXml ?? this.footnoteBuilder.buildFootnotesXml(footnotes ?? []);
+      pkg.addRelationship('word/document.xml', {
+        id: 'rIdFootnotes',
+        type: KNOWN_RELATIONSHIPS.FOOTNOTES,
+        target: 'footnotes.xml',
+      });
+      pkg.setPart({
+        name: 'word/footnotes.xml',
+        contentType: KNOWN_CONTENT_TYPES.WML_FOOTNOTES,
+        data: textEncoder.encode(fnXml),
+      });
+    }
+
+    // 9. Add endnotes if provided or custom XML provided
+    if (customEndnotesXml || (endnotes && endnotes.length > 0)) {
+      const enXml = customEndnotesXml ?? this.footnoteBuilder.buildEndnotesXml(endnotes ?? []);
+      pkg.addRelationship('word/document.xml', {
+        id: 'rIdEndnotes',
+        type: KNOWN_RELATIONSHIPS.ENDNOTES,
+        target: 'endnotes.xml',
+      });
+      pkg.setPart({
+        name: 'word/endnotes.xml',
+        contentType: KNOWN_CONTENT_TYPES.WML_ENDNOTES,
+        data: textEncoder.encode(enXml),
+      });
+    }
+
+    // 10. Add document metadata (docProps/core.xml & docProps/app.xml) if provided
     if (metadata) {
       const coreXml = this.metadataBuilder.buildCorePropertiesXml(metadata);
       pkg.addRelationship(undefined, {

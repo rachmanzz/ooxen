@@ -29,6 +29,14 @@ export class StandardStyleMapper implements StyleMapper {
 
     if (style.color) css['color'] = style.color;
     if (style.backgroundColor) css['background-color'] = style.backgroundColor;
+    if (style.verticalAlign) {
+      css['vertical-align'] = style.verticalAlign;
+      if (style.verticalAlign === 'superscript') {
+        css['font-size'] = '0.75em';
+      } else if (style.verticalAlign === 'subscript') {
+        css['font-size'] = '0.75em';
+      }
+    }
 
     return css;
   }

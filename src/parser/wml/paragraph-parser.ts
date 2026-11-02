@@ -1,4 +1,11 @@
-import type { DrawingShapeNode, HyperlinkInfo, ImageNode, ParagraphNode, RunNode } from '../../types/ast.js';
+import type {
+  DrawingShapeNode,
+  FootnoteReference,
+  HyperlinkInfo,
+  ImageNode,
+  ParagraphNode,
+  RunNode,
+} from '../../types/ast.js';
 import { parseImageNode, type ImageResolver } from '../dml/image-parser.js';
 import { parseDrawingNode } from '../dml/shape-parser.js';
 import type { XmlNode } from '../xml-adapter.js';
@@ -188,6 +195,8 @@ export class StandardParagraphParser implements ParagraphParser {
     let drawing: DrawingShapeNode | undefined;
     let image: ImageNode | undefined;
     let field: string | undefined;
+    let footnoteRef: FootnoteReference | undefined;
+    let isFootnoteRefMark: boolean | undefined;
 
     for (const child of node.children) {
       const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
@@ -213,6 +222,18 @@ export class StandardParagraphParser implements ParagraphParser {
         text += '\n';
       } else if (tag === 'tab') {
         text += '\t';
+      } else if (tag === 'footnotereference') {
+        const idStr = child.attributes['w:id'] ?? child.attributes['id'];
+        const id = idStr ? Number(idStr) : 1;
+        footnoteRef = { id, kind: 'footnote' };
+        if (!text) text = `[${id}]`;
+      } else if (tag === 'endnotereference') {
+        const idStr = child.attributes['w:id'] ?? child.attributes['id'];
+        const id = idStr ? Number(idStr) : 1;
+        footnoteRef = { id, kind: 'endnote' };
+        if (!text) text = `[${id}]`;
+      } else if (tag === 'footnoteref' || tag === 'endnoteref') {
+        isFootnoteRefMark = true;
       } else if (tag === 'drawing' || tag === 'pict') {
         const parsedImage = parseImageNode(child, imageResolver);
         if (parsedImage) {
@@ -237,6 +258,8 @@ export class StandardParagraphParser implements ParagraphParser {
       drawing,
       image,
       field,
+      footnoteRef,
+      isFootnoteRefMark,
     };
   }
 }

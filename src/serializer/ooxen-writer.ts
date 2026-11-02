@@ -7,6 +7,7 @@ import type {
   DocumentMetadata,
   DocumentNode,
   DrawingShapeNode,
+  FootnoteNode,
   HeaderFooterNode,
   HyperlinkInfo,
   ImageNode,
@@ -173,6 +174,8 @@ export class StandardOoxenWriter implements OoxenWriter {
       headerFooterParts,
       externalRelationships,
       document.metadata,
+      document.footnotes,
+      document.endnotes,
     );
     return pkg.serialize();
   }
@@ -236,8 +239,73 @@ export class StandardOoxenWriter implements OoxenWriter {
     return undefined;
   }
 
+  private extractFootnotesFromHtml(container: XmlNode): {
+    footnotes?: FootnoteNode[];
+    endnotes?: FootnoteNode[];
+  } {
+    let footnotes: FootnoteNode[] | undefined;
+    let endnotes: FootnoteNode[] | undefined;
+
+    const findAsides = (node: XmlNode): void => {
+      const tag = node.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+      const cls = (node.attributes['class'] ?? '').toLowerCase();
+
+      if (tag === 'aside' && cls.includes('footnotes')) {
+        const listItems = this.findAllNodes(node, (n) => n.nodeName.toLowerCase().endsWith('li'));
+        footnotes = listItems.map((li) => {
+          const idStr = (li.attributes['id'] ?? '').replace(/^fn-/, '');
+          const id = Number(idStr) || 1;
+          const blocks = this.parseBlockNodes(li.children);
+          return {
+            type: 'footnote' as const,
+            kind: 'footnote' as const,
+            id,
+            children:
+              blocks.length > 0
+                ? blocks
+                : [{ type: 'paragraph' as const, children: [{ type: 'run' as const, text: li.textContent }] }],
+          };
+        });
+      } else if (tag === 'aside' && cls.includes('endnotes')) {
+        const listItems = this.findAllNodes(node, (n) => n.nodeName.toLowerCase().endsWith('li'));
+        endnotes = listItems.map((li) => {
+          const idStr = (li.attributes['id'] ?? '').replace(/^en-/, '');
+          const id = Number(idStr) || 1;
+          const blocks = this.parseBlockNodes(li.children);
+          return {
+            type: 'endnote' as const,
+            kind: 'endnote' as const,
+            id,
+            children:
+              blocks.length > 0
+                ? blocks
+                : [{ type: 'paragraph' as const, children: [{ type: 'run' as const, text: li.textContent }] }],
+          };
+        });
+      }
+
+      for (const child of node.children) {
+        findAsides(child);
+      }
+    };
+
+    findAsides(container);
+    return { footnotes, endnotes };
+  }
+
+  private findAllNodes(root: XmlNode, predicate: (n: XmlNode) => boolean): XmlNode[] {
+    const result: XmlNode[] = [];
+    const traverse = (node: XmlNode): void => {
+      if (predicate(node)) result.push(node);
+      for (const child of node.children) traverse(child);
+    };
+    traverse(root);
+    return result;
+  }
+
   private parseHtmlToAst(rootNode: XmlNode): DocumentNode {
     const metadata = this.extractMetadataFromHtml(rootNode);
+    const { footnotes, endnotes } = this.extractFootnotesFromHtml(rootNode);
 
     let container = rootNode;
     const bodyNode = this.findFirstNode(rootNode, (n) => {
@@ -268,6 +336,8 @@ export class StandardOoxenWriter implements OoxenWriter {
       type: 'document',
       sections,
       metadata,
+      footnotes,
+      endnotes,
     };
   }
 
@@ -290,6 +360,9 @@ export class StandardOoxenWriter implements OoxenWriter {
           kind: 'default',
           children: this.parseBlockNodes(node.children),
         };
+      } else if (tag === 'aside') {
+        // Handled as document-level footnotes/endnotes
+        continue;
       } else {
         bodyNodes.push(node);
       }
@@ -482,6 +555,36 @@ export class StandardOoxenWriter implements OoxenWriter {
               });
             }
           }
+        }
+      } else if (tag === 'sup') {
+        const cls = child.attributes['class'] ?? '';
+        const aChild = child.children.find((c) => c.nodeName.toLowerCase().endsWith('a'));
+        const href = aChild?.attributes['href'] ?? child.attributes['href'] ?? '';
+        const fnMatch = href.match(/^#fn-(\d+)$/);
+        const enMatch = href.match(/^#en-(\d+)$/);
+
+        if (fnMatch || cls.includes('footnote')) {
+          const id = fnMatch ? Number(fnMatch[1]) : 1;
+          runs.push({
+            type: 'run',
+            text: child.textContent || `[${id}]`,
+            footnoteRef: { id, kind: 'footnote' },
+            style: { verticalAlign: 'superscript' },
+          });
+        } else if (enMatch || cls.includes('endnote')) {
+          const id = enMatch ? Number(enMatch[1]) : 1;
+          runs.push({
+            type: 'run',
+            text: child.textContent || `[${id}]`,
+            footnoteRef: { id, kind: 'endnote' },
+            style: { verticalAlign: 'superscript' },
+          });
+        } else {
+          runs.push({
+            type: 'run',
+            text: child.textContent,
+            style: { verticalAlign: 'superscript' },
+          });
         }
       } else if (tag === 'img') {
         const image = this.parseHtmlImage(child);

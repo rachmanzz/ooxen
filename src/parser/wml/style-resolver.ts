@@ -68,6 +68,12 @@ export function parseRunProperties(node?: XmlNode): TextStyle {
         }
         break;
       }
+      case 'vertalign': {
+        if (val === 'superscript' || val === 'subscript' || val === 'baseline') {
+          style.verticalAlign = val;
+        }
+        break;
+      }
     }
   }
 

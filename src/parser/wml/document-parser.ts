@@ -2,6 +2,7 @@ import type {
   BlockNode,
   DocumentMetadata,
   DocumentNode,
+  FootnoteNode,
   HeaderFooterNode,
   HeaderFooterType,
   SectionHeaders,
@@ -15,6 +16,7 @@ import { KNOWN_RELATIONSHIPS } from '../../opc/relationships.js';
 import { parsePackageMetadata } from '../metadata/metadata-parser.js';
 import { defaultXmlAdapter, type XmlNode } from '../xml-adapter.js';
 import type { ImageResolver } from '../dml/image-parser.js';
+import { parseEndnotesXml, parseFootnotesXml } from './footnote-parser.js';
 import { parseHeaderFooterNode, type HeaderFooterResolver } from './header-footer-parser.js';
 import { StandardNumberingResolver, type NumberingResolver } from './numbering-resolver.js';
 import { defaultParagraphParser, type HyperlinkResolver, type ParagraphParser } from './paragraph-parser.js';
@@ -34,6 +36,8 @@ export interface DocumentParser {
     headerFooterResolver?: HeaderFooterResolver,
     hyperlinkResolver?: HyperlinkResolver,
     metadata?: DocumentMetadata,
+    footnotes?: FootnoteNode[],
+    endnotes?: FootnoteNode[],
   ): DocumentNode;
   parseDocumentXml(
     xmlString: string,
@@ -43,6 +47,8 @@ export interface DocumentParser {
     headerFooterResolver?: HeaderFooterResolver,
     hyperlinkResolver?: HyperlinkResolver,
     metadata?: DocumentMetadata,
+    footnotes?: FootnoteNode[],
+    endnotes?: FootnoteNode[],
   ): DocumentNode;
   parsePackage(pkg: OpcPackage): DocumentNode;
 }
@@ -145,6 +151,8 @@ export class StandardDocumentParser implements DocumentParser {
     headerFooterResolver?: HeaderFooterResolver,
     hyperlinkResolver?: HyperlinkResolver,
     metadata?: DocumentMetadata,
+    footnotes?: FootnoteNode[],
+    endnotes?: FootnoteNode[],
   ): DocumentNode {
     const rootNode = defaultXmlAdapter.parse(xmlString);
     return this.parseDocument(
@@ -155,6 +163,8 @@ export class StandardDocumentParser implements DocumentParser {
       headerFooterResolver,
       hyperlinkResolver,
       metadata,
+      footnotes,
+      endnotes,
     );
   }
 
@@ -166,6 +176,8 @@ export class StandardDocumentParser implements DocumentParser {
     headerFooterResolver?: HeaderFooterResolver,
     hyperlinkResolver?: HyperlinkResolver,
     metadata?: DocumentMetadata,
+    footnotes?: FootnoteNode[],
+    endnotes?: FootnoteNode[],
   ): DocumentNode {
     // Find w:body
     let bodyNode: XmlNode | undefined;
@@ -186,6 +198,8 @@ export class StandardDocumentParser implements DocumentParser {
           },
         ],
         metadata,
+        footnotes,
+        endnotes,
       };
     }
 
@@ -249,6 +263,8 @@ export class StandardDocumentParser implements DocumentParser {
       type: 'document',
       sections,
       metadata,
+      footnotes,
+      endnotes,
     };
   }
 
@@ -350,10 +366,39 @@ export class StandardDocumentParser implements DocumentParser {
       resolveHyperlink: (relId) => hyperlinkMap.get(relId),
     };
 
-    // 7. Resolve metadata
+    // 7. Resolve footnotes & endnotes
+    let footnotes: FootnoteNode[] | undefined;
+    const fnRel = docRels.find((r) => r.type === KNOWN_RELATIONSHIPS.FOOTNOTES);
+    const fnPath = fnRel ? `word/${fnRel.target.replace(/^\/+/, '')}` : 'word/footnotes.xml';
+    const fnPart = pkg.getPart(fnPath);
+    if (fnPart) {
+      footnotes = parseFootnotesXml(
+        textDecoder.decode(fnPart.data),
+        styleResolver,
+        numberingResolver,
+        imageResolver,
+        hyperlinkResolver,
+      );
+    }
+
+    let endnotes: FootnoteNode[] | undefined;
+    const enRel = docRels.find((r) => r.type === KNOWN_RELATIONSHIPS.ENDNOTES);
+    const enPath = enRel ? `word/${enRel.target.replace(/^\/+/, '')}` : 'word/endnotes.xml';
+    const enPart = pkg.getPart(enPath);
+    if (enPart) {
+      endnotes = parseEndnotesXml(
+        textDecoder.decode(enPart.data),
+        styleResolver,
+        numberingResolver,
+        imageResolver,
+        hyperlinkResolver,
+      );
+    }
+
+    // 8. Resolve metadata
     const metadata = parsePackageMetadata(pkg);
 
-    // 8. Parse document XML
+    // 9. Parse document XML
     const rootNode = defaultXmlAdapter.parse(textDecoder.decode(docPart.data));
     return this.parseDocument(
       rootNode,
@@ -363,6 +408,8 @@ export class StandardDocumentParser implements DocumentParser {
       headerFooterResolver,
       hyperlinkResolver,
       metadata,
+      footnotes,
+      endnotes,
     );
   }
 }

@@ -13,6 +13,7 @@ export interface TextStyle {
   strike?: boolean;
   color?: string; // hex color e.g. "#000000"
   backgroundColor?: string;
+  verticalAlign?: 'superscript' | 'subscript' | 'baseline';
 }
 
 export interface ParagraphNumbering {
