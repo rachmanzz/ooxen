@@ -2,19 +2,47 @@ import type { Margins, Size } from './common.js';
 import type { ParagraphStyle, TableCellStyle, TextStyle } from './style.js';
 
 /**
- * Universal Document AST (Abstract Syntax Tree) representing ISO/IEC 29500 WordprocessingML.
+ * Universal Document AST (Abstract Syntax Tree) representing ISO/IEC 29500 WordprocessingML and DrawingML.
  */
 
-export type ASTNodeType = 'document' | 'section' | 'paragraph' | 'run' | 'table' | 'table-row' | 'table-cell';
+export type ASTNodeType = 'document' | 'section' | 'paragraph' | 'run' | 'table' | 'table-row' | 'table-cell' | 'drawing';
 
 export interface BaseASTNode {
   type: ASTNodeType;
+}
+
+export type VectorPathCommandType =
+  | 'moveTo'
+  | 'lineTo'
+  | 'cubicBezTo'
+  | 'quadBezTo'
+  | 'arcTo'
+  | 'close';
+
+export interface VectorPathCommand {
+  type: VectorPathCommandType;
+  points: number[];
+}
+
+export interface DrawingShapeNode extends BaseASTNode {
+  type: 'drawing';
+  id?: string;
+  name?: string;
+  widthPt: number;
+  heightPt: number;
+  commands: VectorPathCommand[];
+  fill?: string;
+  stroke?: {
+    color: string;
+    widthPt: number;
+  };
 }
 
 export interface RunNode extends BaseASTNode {
   type: 'run';
   text: string;
   style?: TextStyle;
+  drawing?: DrawingShapeNode;
 }
 
 export interface ParagraphNode extends BaseASTNode {
@@ -28,7 +56,7 @@ export interface TableCellNode extends BaseASTNode {
   style?: TableCellStyle;
   colSpan?: number;
   rowSpan?: number;
-  children: (ParagraphNode | TableNode)[];
+  children: BlockNode[];
 }
 
 export interface TableRowNode extends BaseASTNode {
@@ -41,7 +69,7 @@ export interface TableNode extends BaseASTNode {
   rows: TableRowNode[];
 }
 
-export type BlockNode = ParagraphNode | TableNode;
+export type BlockNode = ParagraphNode | TableNode | DrawingShapeNode;
 
 export interface SectionProperties {
   pageSize: Size; // points

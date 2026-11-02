@@ -1,3 +1,4 @@
+import type { DrawingShapeNode } from '../../types/ast.js';
 import type { Rect } from '../../types/common.js';
 import type { TextStyle } from '../../types/style.js';
 import type { CanvasTarget } from './canvas-target.js';
@@ -9,6 +10,7 @@ import type { CanvasTarget } from './canvas-target.js';
 export interface DrawPrimitives {
   drawText(target: CanvasTarget, text: string, x: number, y: number, baseline: number, style?: TextStyle): void;
   drawRect(target: CanvasTarget, rect: Rect, fillColor?: string, strokeColor?: string, strokeWidth?: number): void;
+  drawShape(target: CanvasTarget, shape: DrawingShapeNode, x: number, y: number): void;
 }
 
 export class StandardDrawPrimitives implements DrawPrimitives {
@@ -61,6 +63,69 @@ export class StandardDrawPrimitives implements DrawPrimitives {
       target.lineWidth = strokeWidth;
       target.strokeRect(rect.x, rect.y, rect.width, rect.height);
     }
+    target.restore();
+  }
+
+  drawShape(target: CanvasTarget, shape: DrawingShapeNode, x: number, y: number): void {
+    target.save();
+    target.translate(x, y);
+
+    if (target.beginPath) {
+      target.beginPath();
+      for (const cmd of shape.commands) {
+        switch (cmd.type) {
+          case 'moveTo':
+            target.moveTo?.(cmd.points[0] ?? 0, cmd.points[1] ?? 0);
+            break;
+          case 'lineTo':
+            target.lineTo?.(cmd.points[0] ?? 0, cmd.points[1] ?? 0);
+            break;
+          case 'cubicBezTo':
+            target.bezierCurveTo?.(
+              cmd.points[0] ?? 0,
+              cmd.points[1] ?? 0,
+              cmd.points[2] ?? 0,
+              cmd.points[3] ?? 0,
+              cmd.points[4] ?? 0,
+              cmd.points[5] ?? 0,
+            );
+            break;
+          case 'quadBezTo':
+            target.quadraticCurveTo?.(
+              cmd.points[0] ?? 0,
+              cmd.points[1] ?? 0,
+              cmd.points[2] ?? 0,
+              cmd.points[3] ?? 0,
+            );
+            break;
+          case 'close':
+            target.closePath?.();
+            break;
+        }
+      }
+
+      if (shape.fill) {
+        target.fillStyle = shape.fill;
+        target.fill?.();
+      }
+
+      if (shape.stroke) {
+        target.strokeStyle = shape.stroke.color;
+        target.lineWidth = shape.stroke.widthPt;
+        target.stroke?.();
+      }
+    } else {
+      if (shape.fill) {
+        target.fillStyle = shape.fill;
+        target.fillRect(0, 0, shape.widthPt, shape.heightPt);
+      }
+      if (shape.stroke) {
+        target.strokeStyle = shape.stroke.color;
+        target.lineWidth = shape.stroke.widthPt;
+        target.strokeRect(0, 0, shape.widthPt, shape.heightPt);
+      }
+    }
+
     target.restore();
   }
 }

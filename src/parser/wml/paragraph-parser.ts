@@ -1,4 +1,5 @@
-import type { ParagraphNode, RunNode } from '../../types/ast.js';
+import type { DrawingShapeNode, ParagraphNode, RunNode } from '../../types/ast.js';
+import { parseDrawingNode } from '../dml/shape-parser.js';
 import type { XmlNode } from '../xml-adapter.js';
 import { parseParagraphProperties, parseRunProperties, type StyleResolver } from './style-resolver.js';
 
@@ -28,6 +29,15 @@ export class StandardParagraphParser implements ParagraphParser {
         }
       } else if (tag === 'r') {
         runs.push(this.parseRun(child, styleResolver));
+      } else if (tag === 'drawing' || tag === 'pict') {
+        const parsedDrawing = parseDrawingNode(child);
+        if (parsedDrawing) {
+          runs.push({
+            type: 'run',
+            text: '',
+            drawing: parsedDrawing,
+          });
+        }
       }
     }
 
@@ -46,6 +56,7 @@ export class StandardParagraphParser implements ParagraphParser {
     let directRPrNode: XmlNode | undefined;
     let rStyleId: string | undefined;
     let text = '';
+    let drawing: DrawingShapeNode | undefined;
 
     for (const child of node.children) {
       const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
@@ -62,6 +73,11 @@ export class StandardParagraphParser implements ParagraphParser {
         text += '\n';
       } else if (tag === 'tab') {
         text += '\t';
+      } else if (tag === 'drawing' || tag === 'pict') {
+        const parsedDrawing = parseDrawingNode(child);
+        if (parsedDrawing) {
+          drawing = parsedDrawing;
+        }
       }
     }
 
@@ -73,6 +89,7 @@ export class StandardParagraphParser implements ParagraphParser {
       type: 'run',
       text,
       style: Object.keys(combinedStyle).length > 0 ? combinedStyle : undefined,
+      drawing,
     };
   }
 }

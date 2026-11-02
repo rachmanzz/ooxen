@@ -55,14 +55,18 @@ export class StandardPageRenderer implements PageRenderer {
         const fragX = line.bounds.x + fragment.bounds.x;
         const fragY = line.bounds.y + fragment.bounds.y;
 
-        this.primitives.drawText(
-          target,
-          fragment.text,
-          fragX,
-          fragY,
-          line.baseline,
-          fragment.style,
-        );
+        if (fragment.drawing) {
+          this.primitives.drawShape(target, fragment.drawing, fragX, fragY);
+        } else {
+          this.primitives.drawText(
+            target,
+            fragment.text,
+            fragX,
+            fragY,
+            line.baseline,
+            fragment.style,
+          );
+        }
       }
     }
   }

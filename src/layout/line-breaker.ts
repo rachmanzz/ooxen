@@ -1,4 +1,4 @@
-import type { ParagraphNode, RunNode } from '../types/ast.js';
+import type { DrawingShapeNode, ParagraphNode, RunNode } from '../types/ast.js';
 import type { Rect } from '../types/common.js';
 import type { TextStyle } from '../types/style.js';
 import { defaultTextMetrics, type TextMetricsMeasurer } from './text-metrics.js';
@@ -10,6 +10,7 @@ import { defaultTextMetrics, type TextMetricsMeasurer } from './text-metrics.js'
 export interface LineFragment {
   text: string;
   style?: TextStyle;
+  drawing?: DrawingShapeNode;
   bounds: Rect; // relative to line (x: offset from line start, y: 0)
 }
 
@@ -31,6 +32,7 @@ interface WordToken {
   ascent: number;
   descent: number;
   style?: TextStyle;
+  drawing?: DrawingShapeNode;
 }
 
 export class StandardLineBreaker implements LineBreaker {
@@ -149,6 +151,19 @@ export class StandardLineBreaker implements LineBreaker {
     const tokens: WordToken[] = [];
 
     for (const run of runs) {
+      if (run.drawing) {
+        tokens.push({
+          text: '',
+          isSpace: false,
+          width: run.drawing.widthPt,
+          height: run.drawing.heightPt,
+          ascent: run.drawing.heightPt,
+          descent: 0,
+          style: run.style,
+          drawing: run.drawing,
+        });
+      }
+
       const text = run.text;
       if (!text) continue;
 
@@ -246,6 +261,7 @@ export class StandardLineBreaker implements LineBreaker {
       fragments.push({
         text: token.text,
         style: token.style,
+        drawing: token.drawing,
         bounds: {
           x: currentX,
           y: maxAscent - token.ascent, // baseline alignment

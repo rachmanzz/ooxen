@@ -1,5 +1,6 @@
+import { generatePresetGeometry, parseSvgPathToCommands } from '../parser/dml/shape-parser.js';
 import { defaultXmlAdapter, type XmlAdapter, type XmlNode } from '../parser/xml-adapter.js';
-import type { BlockNode, DocumentNode, ParagraphNode, RunNode, SectionNode, TableCellNode, TableNode, TableRowNode } from '../types/ast.js';
+import type { BlockNode, DocumentNode, DrawingShapeNode, ParagraphNode, RunNode, SectionNode, TableCellNode, TableNode, TableRowNode } from '../types/ast.js';
 import type { ParagraphStyle, TableCellStyle, TextStyle } from '../types/style.js';
 import { defaultPackageBuilder, type PackageBuilder } from './package-builder.js';
 import { defaultWmlBuilder, type WmlBuilder } from './wml-builder.js';
@@ -82,10 +83,35 @@ export class StandardOoxenWriter implements OoxenWriter {
         blocks.push(this.parseHtmlParagraph(node));
       } else if (tag === 'table') {
         blocks.push(this.parseHtmlTable(node));
+      } else if (tag === 'svg') {
+        const shape = this.parseSvgNode(node);
+        if (shape) blocks.push(shape);
       }
     }
 
     return blocks;
+  }
+
+  private parseSvgNode(svgNode: XmlNode): DrawingShapeNode | undefined {
+    const widthPt = Number.parseFloat(svgNode.attributes['width'] ?? '100');
+    const heightPt = Number.parseFloat(svgNode.attributes['height'] ?? '100');
+
+    const pathNode = svgNode.children.find((c) => c.nodeName.toLowerCase().endsWith('path'));
+    const d = pathNode?.attributes['d'] ?? '';
+    const fill = pathNode?.attributes['fill'];
+    const stroke = pathNode?.attributes['stroke'];
+    const strokeWidth = Number.parseFloat(pathNode?.attributes['stroke-width'] ?? '1');
+
+    const commands = d ? parseSvgPathToCommands(d) : generatePresetGeometry('rect', widthPt, heightPt);
+
+    return {
+      type: 'drawing',
+      widthPt: Number.isNaN(widthPt) ? 100 : widthPt,
+      heightPt: Number.isNaN(heightPt) ? 100 : heightPt,
+      commands,
+      fill: fill && fill !== 'none' ? fill : undefined,
+      stroke: stroke && stroke !== 'none' ? { color: stroke, widthPt: Number.isNaN(strokeWidth) ? 1 : strokeWidth } : undefined,
+    };
   }
 
   private parseHtmlParagraph(pNode: XmlNode): ParagraphNode {
@@ -110,11 +136,27 @@ export class StandardOoxenWriter implements OoxenWriter {
         if (spanCss['color']) rStyle.color = spanCss['color'];
         if (spanCss['font-family']) rStyle.fontFamily = spanCss['font-family'];
 
+        let drawing: DrawingShapeNode | undefined;
+        const svgChild = child.children.find((c) => c.nodeName.toLowerCase().endsWith('svg'));
+        if (svgChild) {
+          drawing = this.parseSvgNode(svgChild);
+        }
+
         runs.push({
           type: 'run',
           text: child.textContent,
           style: Object.keys(rStyle).length > 0 ? rStyle : undefined,
+          drawing,
         });
+      } else if (tag === 'svg') {
+        const shape = this.parseSvgNode(child);
+        if (shape) {
+          runs.push({
+            type: 'run',
+            text: '',
+            drawing: shape,
+          });
+        }
       } else if (tag === 'br') {
         runs.push({ type: 'run', text: '\n' });
       }

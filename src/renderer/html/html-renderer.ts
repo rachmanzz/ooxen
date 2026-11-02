@@ -1,4 +1,4 @@
-import type { DocumentNode, ParagraphNode, RunNode, SectionNode, TableCellNode, TableNode, TableRowNode } from '../../types/ast.js';
+import type { DrawingShapeNode, DocumentNode, ParagraphNode, RunNode, SectionNode, TableCellNode, TableNode, TableRowNode, VectorPathCommand } from '../../types/ast.js';
 import { defaultStyleMapper, type StyleMapper } from './style-mapper.js';
 
 function escapeXml(text: string): string {
@@ -8,6 +8,37 @@ function escapeXml(text: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+function commandsToSvgPath(commands: VectorPathCommand[]): string {
+  return commands
+    .map((cmd) => {
+      switch (cmd.type) {
+        case 'moveTo':
+          return `M ${cmd.points[0]} ${cmd.points[1]}`;
+        case 'lineTo':
+          return `L ${cmd.points[0]} ${cmd.points[1]}`;
+        case 'cubicBezTo':
+          return `C ${cmd.points[0]} ${cmd.points[1]} ${cmd.points[2]} ${cmd.points[3]} ${cmd.points[4]} ${cmd.points[5]}`;
+        case 'quadBezTo':
+          return `Q ${cmd.points[0]} ${cmd.points[1]} ${cmd.points[2]} ${cmd.points[3]}`;
+        case 'close':
+          return 'Z';
+        default:
+          return '';
+      }
+    })
+    .filter(Boolean)
+    .join(' ');
+}
+
+export function renderShapeToSvg(shape: DrawingShapeNode): string {
+  const d = commandsToSvgPath(shape.commands);
+  const fill = shape.fill ? escapeXml(shape.fill) : 'none';
+  const stroke = shape.stroke?.color ? escapeXml(shape.stroke.color) : 'none';
+  const strokeWidth = shape.stroke?.widthPt ?? 1;
+
+  return `<svg class="ooxen-shape" width="${shape.widthPt}pt" height="${shape.heightPt}pt" viewBox="0 0 ${shape.widthPt} ${shape.heightPt}" xmlns="http://www.w3.org/2000/svg"><path d="${d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"/></svg>`;
 }
 
 /**
@@ -41,7 +72,11 @@ export class StandardHtmlRenderer implements HtmlRenderer {
 
     const styleStr = this.styleMapper.toCssString(styleObj);
     const childrenHtml = section.children
-      .map((block) => (block.type === 'paragraph' ? this.renderParagraph(block) : this.renderTable(block)))
+      .map((block) => {
+        if (block.type === 'paragraph') return this.renderParagraph(block);
+        if (block.type === 'table') return this.renderTable(block);
+        return `    ${renderShapeToSvg(block)}`;
+      })
       .join('\n');
 
     return `  <section class="ooxen-section" style="${escapeXml(styleStr)}">\n${childrenHtml}\n  </section>`;
@@ -61,7 +96,8 @@ export class StandardHtmlRenderer implements HtmlRenderer {
 
     // Convert newlines in run text to self-closing <br/> tags
     const escaped = escapeXml(run.text).replace(/\n/g, '<br/>');
-    return `<span class="ooxen-r"${styleAttr}>${escaped}</span>`;
+    const shapeSvg = run.drawing ? renderShapeToSvg(run.drawing) : '';
+    return `<span class="ooxen-r"${styleAttr}>${escaped}${shapeSvg}</span>`;
   }
 
   private renderTable(table: TableNode): string {
@@ -88,7 +124,11 @@ export class StandardHtmlRenderer implements HtmlRenderer {
 
     const styleAttr = Object.keys(styleObj).length > 0 ? ` style="${escapeXml(this.styleMapper.toCssString(styleObj))}"` : '';
     const innerHtml = cell.children
-      .map((child) => (child.type === 'paragraph' ? this.renderParagraph(child) : this.renderTable(child)))
+      .map((child) => {
+        if (child.type === 'paragraph') return this.renderParagraph(child);
+        if (child.type === 'table') return this.renderTable(child);
+        return renderShapeToSvg(child);
+      })
       .join('');
 
     return `<td class="ooxen-tc"${colSpanAttr}${styleAttr}>${innerHtml}</td>`;
