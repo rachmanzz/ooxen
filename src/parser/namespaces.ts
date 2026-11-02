@@ -17,4 +17,11 @@ export const NAMESPACES = {
 
   // Markup Compatibility and Extensibility (MCE, Part 3)
   MCE: 'http://schemas.openxmlformats.org/markup-compatibility/2006',
+
+  // Document Metadata (docProps/core.xml & docProps/app.xml)
+  CORE_PROPERTIES: 'http://schemas.openxmlformats.org/package/2006/metadata/core-properties',
+  EXTENDED_PROPERTIES: 'http://schemas.openxmlformats.org/officeDocument/2006/extended-properties',
+  DUBLIN_CORE: 'http://purl.org/dc/elements/1.1/',
+  DUBLIN_CORE_TERMS: 'http://purl.org/dc/terms/',
+  DOC_PROPS_VTYPES: 'http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes',
 } as const;

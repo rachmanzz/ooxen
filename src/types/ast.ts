@@ -142,7 +142,27 @@ export interface SectionNode extends BaseASTNode {
   footers?: SectionFooters;
 }
 
+export interface DocumentMetadata {
+  title?: string;
+  creator?: string; // author / dc:creator
+  subject?: string;
+  description?: string;
+  keywords?: string[];
+  lastModifiedBy?: string;
+  revision?: string | number;
+  created?: string; // ISO 8601 string
+  modified?: string; // ISO 8601 string
+  application?: string;
+  company?: string;
+  pages?: number;
+  words?: number;
+  characters?: number;
+  paragraphs?: number;
+  lines?: number;
+}
+
 export interface DocumentNode extends BaseASTNode {
   type: 'document';
   sections: SectionNode[];
+  metadata?: DocumentMetadata;
 }

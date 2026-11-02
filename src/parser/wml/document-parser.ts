@@ -1,11 +1,24 @@
-import type { BlockNode, DocumentNode, HeaderFooterType, SectionHeaders, SectionFooters, SectionNode, SectionProperties } from '../../types/ast.js';
+import type {
+  BlockNode,
+  DocumentMetadata,
+  DocumentNode,
+  HeaderFooterNode,
+  HeaderFooterType,
+  SectionHeaders,
+  SectionFooters,
+  SectionNode,
+  SectionProperties,
+} from '../../types/ast.js';
 import { twipsToPt } from '../../types/common.js';
+import { openPackage, type OpcPackage } from '../../opc/package.js';
+import { KNOWN_RELATIONSHIPS } from '../../opc/relationships.js';
+import { parsePackageMetadata } from '../metadata/metadata-parser.js';
 import { defaultXmlAdapter, type XmlNode } from '../xml-adapter.js';
 import type { ImageResolver } from '../dml/image-parser.js';
-import type { HeaderFooterResolver } from './header-footer-parser.js';
-import type { NumberingResolver } from './numbering-resolver.js';
+import { parseHeaderFooterNode, type HeaderFooterResolver } from './header-footer-parser.js';
+import { StandardNumberingResolver, type NumberingResolver } from './numbering-resolver.js';
 import { defaultParagraphParser, type HyperlinkResolver, type ParagraphParser } from './paragraph-parser.js';
-import type { StyleResolver } from './style-resolver.js';
+import { StandardStyleResolver, type StyleResolver } from './style-resolver.js';
 import { defaultTableParser, type TableParser } from './table-parser.js';
 
 /**
@@ -20,6 +33,7 @@ export interface DocumentParser {
     imageResolver?: ImageResolver,
     headerFooterResolver?: HeaderFooterResolver,
     hyperlinkResolver?: HyperlinkResolver,
+    metadata?: DocumentMetadata,
   ): DocumentNode;
   parseDocumentXml(
     xmlString: string,
@@ -28,7 +42,9 @@ export interface DocumentParser {
     imageResolver?: ImageResolver,
     headerFooterResolver?: HeaderFooterResolver,
     hyperlinkResolver?: HyperlinkResolver,
+    metadata?: DocumentMetadata,
   ): DocumentNode;
+  parsePackage(pkg: OpcPackage): DocumentNode;
 }
 
 export function parseSectionHeaderFooterReferences(
@@ -128,9 +144,18 @@ export class StandardDocumentParser implements DocumentParser {
     imageResolver?: ImageResolver,
     headerFooterResolver?: HeaderFooterResolver,
     hyperlinkResolver?: HyperlinkResolver,
+    metadata?: DocumentMetadata,
   ): DocumentNode {
     const rootNode = defaultXmlAdapter.parse(xmlString);
-    return this.parseDocument(rootNode, styleResolver, numberingResolver, imageResolver, headerFooterResolver, hyperlinkResolver);
+    return this.parseDocument(
+      rootNode,
+      styleResolver,
+      numberingResolver,
+      imageResolver,
+      headerFooterResolver,
+      hyperlinkResolver,
+      metadata,
+    );
   }
 
   parseDocument(
@@ -140,6 +165,7 @@ export class StandardDocumentParser implements DocumentParser {
     imageResolver?: ImageResolver,
     headerFooterResolver?: HeaderFooterResolver,
     hyperlinkResolver?: HyperlinkResolver,
+    metadata?: DocumentMetadata,
   ): DocumentNode {
     // Find w:body
     let bodyNode: XmlNode | undefined;
@@ -159,6 +185,7 @@ export class StandardDocumentParser implements DocumentParser {
             children: [],
           },
         ],
+        metadata,
       };
     }
 
@@ -221,8 +248,134 @@ export class StandardDocumentParser implements DocumentParser {
     return {
       type: 'document',
       sections,
+      metadata,
     };
+  }
+
+  parsePackage(pkg: OpcPackage): DocumentNode {
+    const textDecoder = new TextDecoder();
+
+    // 1. Resolve document part
+    let docPartPath = 'word/document.xml';
+    const rootRels = pkg.getRelationships();
+    const docRel = rootRels.find((r) => r.type === KNOWN_RELATIONSHIPS.DOCUMENT);
+    if (docRel) {
+      docPartPath = docRel.target.replace(/^\/+/, '');
+    }
+
+    const docPart = pkg.getPart(docPartPath);
+    if (!docPart) {
+      throw new Error(`Main document part not found in package: ${docPartPath}`);
+    }
+
+    // 2. Resolve styles
+    let styleResolver: StyleResolver | undefined;
+    const docRels = pkg.getRelationships(docPartPath);
+    const stylesRel = docRels.find((r) => r.type === KNOWN_RELATIONSHIPS.STYLES);
+    const stylesPartPath = stylesRel ? `word/${stylesRel.target.replace(/^\/+/, '')}` : 'word/styles.xml';
+    const stylesPart = pkg.getPart(stylesPartPath);
+    if (stylesPart) {
+      const stylesXml = defaultXmlAdapter.parse(textDecoder.decode(stylesPart.data));
+      const resolver = new StandardStyleResolver();
+      resolver.loadStyles(stylesXml);
+      styleResolver = resolver;
+    }
+
+    // 3. Resolve numbering
+    let numberingResolver: NumberingResolver | undefined;
+    const numRel = docRels.find((r) => r.type === KNOWN_RELATIONSHIPS.NUMBERING);
+    const numPartPath = numRel ? `word/${numRel.target.replace(/^\/+/, '')}` : 'word/numbering.xml';
+    const numPart = pkg.getPart(numPartPath);
+    if (numPart) {
+      const numXml = defaultXmlAdapter.parse(textDecoder.decode(numPart.data));
+      const resolver = new StandardNumberingResolver();
+      resolver.parseNumberingXml(numXml);
+      numberingResolver = resolver;
+    }
+
+    // 4. Resolve images
+    const imageMap = new Map<string, { data?: Uint8Array; mimeType?: string; name?: string }>();
+    for (const rel of docRels) {
+      if (rel.type === KNOWN_RELATIONSHIPS.IMAGE) {
+        const imgPath = rel.target.startsWith('word/') ? rel.target : `word/${rel.target.replace(/^\/+/, '')}`;
+        const imgPart = pkg.getPart(imgPath);
+        if (imgPart) {
+          imageMap.set(rel.id, {
+            data: imgPart.data,
+            mimeType: imgPart.contentType,
+            name: rel.target,
+          });
+        }
+      }
+    }
+    const imageResolver: ImageResolver = {
+      resolveImage: (relId) => imageMap.get(relId),
+    };
+
+    // 5. Resolve headers and footers
+    const headerMap = new Map<string, HeaderFooterNode>();
+    const footerMap = new Map<string, HeaderFooterNode>();
+    for (const rel of docRels) {
+      if (rel.type === KNOWN_RELATIONSHIPS.HEADER) {
+        const hPath = rel.target.startsWith('word/') ? rel.target : `word/${rel.target.replace(/^\/+/, '')}`;
+        const hPart = pkg.getPart(hPath);
+        if (hPart) {
+          const hXml = defaultXmlAdapter.parse(textDecoder.decode(hPart.data));
+          const hNode = parseHeaderFooterNode(hXml, 'default', styleResolver, numberingResolver, imageResolver);
+          headerMap.set(rel.id, hNode);
+        }
+      } else if (rel.type === KNOWN_RELATIONSHIPS.FOOTER) {
+        const fPath = rel.target.startsWith('word/') ? rel.target : `word/${rel.target.replace(/^\/+/, '')}`;
+        const fPart = pkg.getPart(fPath);
+        if (fPart) {
+          const fXml = defaultXmlAdapter.parse(textDecoder.decode(fPart.data));
+          const fNode = parseHeaderFooterNode(fXml, 'default', styleResolver, numberingResolver, imageResolver);
+          footerMap.set(rel.id, fNode);
+        }
+      }
+    }
+    const headerFooterResolver: HeaderFooterResolver = {
+      resolveHeader: (relId) => headerMap.get(relId),
+      resolveFooter: (relId) => footerMap.get(relId),
+    };
+
+    // 6. Resolve hyperlinks
+    const hyperlinkMap = new Map<string, string>();
+    for (const rel of docRels) {
+      if (rel.type === KNOWN_RELATIONSHIPS.HYPERLINK && rel.target) {
+        hyperlinkMap.set(rel.id, rel.target);
+      }
+    }
+    const hyperlinkResolver: HyperlinkResolver = {
+      resolveHyperlink: (relId) => hyperlinkMap.get(relId),
+    };
+
+    // 7. Resolve metadata
+    const metadata = parsePackageMetadata(pkg);
+
+    // 8. Parse document XML
+    const rootNode = defaultXmlAdapter.parse(textDecoder.decode(docPart.data));
+    return this.parseDocument(
+      rootNode,
+      styleResolver,
+      numberingResolver,
+      imageResolver,
+      headerFooterResolver,
+      hyperlinkResolver,
+      metadata,
+    );
   }
 }
 
 export const defaultDocumentParser = new StandardDocumentParser();
+
+/** Convenience top-level function to parse an OpcPackage into DocumentNode */
+export function parsePackage(pkg: OpcPackage): DocumentNode {
+  return defaultDocumentParser.parsePackage(pkg);
+}
+
+/** Convenience top-level function to open and parse a .docx Uint8Array buffer into DocumentNode */
+export async function openDocument(data: Uint8Array): Promise<DocumentNode> {
+  const pkg = await openPackage(data);
+  return defaultDocumentParser.parsePackage(pkg);
+}

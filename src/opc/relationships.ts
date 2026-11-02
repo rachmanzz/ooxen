@@ -23,6 +23,8 @@ export const KNOWN_RELATIONSHIPS = {
   HEADER: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/header',
   FOOTER: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer',
   HYPERLINK: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink',
+  CORE_PROPERTIES: 'http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties',
+  EXTENDED_PROPERTIES: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties',
 } as const;
 
 export function getRelationshipsPath(partPath?: string): string {

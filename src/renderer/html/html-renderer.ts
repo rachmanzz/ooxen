@@ -82,7 +82,37 @@ export class StandardHtmlRenderer implements HtmlRenderer {
 
   renderToHtmlString(document: DocumentNode): string {
     const sectionsHtml = document.sections.map((s) => this.renderSection(s)).join('\n');
-    return `<article class="ooxen-document" xmlns="http://www.w3.org/1999/xhtml">\n${sectionsHtml}\n</article>`;
+    const articleHtml = `<article class="ooxen-document" xmlns="http://www.w3.org/1999/xhtml">\n${sectionsHtml}\n</article>`;
+
+    if (!document.metadata) {
+      return articleHtml;
+    }
+
+    const headLines: string[] = [];
+    if (document.metadata.title) {
+      headLines.push(`    <title>${escapeXml(document.metadata.title)}</title>`);
+    }
+    if (document.metadata.creator) {
+      headLines.push(`    <meta name="author" content="${escapeXml(document.metadata.creator)}" />`);
+    }
+    if (document.metadata.description) {
+      headLines.push(`    <meta name="description" content="${escapeXml(document.metadata.description)}" />`);
+    }
+    if (document.metadata.keywords && document.metadata.keywords.length > 0) {
+      headLines.push(`    <meta name="keywords" content="${escapeXml(document.metadata.keywords.join(', '))}" />`);
+    }
+    if (document.metadata.subject) {
+      headLines.push(`    <meta name="subject" content="${escapeXml(document.metadata.subject)}" />`);
+    }
+    if (document.metadata.application) {
+      headLines.push(`    <meta name="generator" content="${escapeXml(document.metadata.application)}" />`);
+    }
+
+    if (headLines.length === 0) {
+      return articleHtml;
+    }
+
+    return `<html xmlns="http://www.w3.org/1999/xhtml">\n  <head>\n${headLines.join('\n')}\n  </head>\n  <body>\n${articleHtml}\n  </body>\n</html>`;
   }
 
   private renderSection(section: SectionNode): string {

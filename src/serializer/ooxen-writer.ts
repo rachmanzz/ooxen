@@ -4,6 +4,7 @@ import { generatePresetGeometry, parseSvgPathToCommands } from '../parser/dml/sh
 import { defaultXmlAdapter, type XmlAdapter, type XmlNode } from '../parser/xml-adapter.js';
 import type {
   BlockNode,
+  DocumentMetadata,
   DocumentNode,
   DrawingShapeNode,
   HeaderFooterNode,
@@ -171,6 +172,7 @@ export class StandardOoxenWriter implements OoxenWriter {
       mediaParts,
       headerFooterParts,
       externalRelationships,
+      document.metadata,
     );
     return pkg.serialize();
   }
@@ -181,13 +183,81 @@ export class StandardOoxenWriter implements OoxenWriter {
     return this.write(doc);
   }
 
+  private extractMetadataFromHtml(rootNode: XmlNode): DocumentMetadata | undefined {
+    const metadata: DocumentMetadata = {};
+    let found = false;
+
+    const traverse = (node: XmlNode): void => {
+      const tag = node.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+      if (tag === 'title' && node.textContent?.trim()) {
+        metadata.title = node.textContent.trim();
+        found = true;
+      } else if (tag === 'meta') {
+        const name = (node.attributes['name'] ?? node.attributes['property'] ?? '').toLowerCase();
+        const content = (node.attributes['content'] ?? '').trim();
+        if (content) {
+          if (name === 'author' || name === 'creator') {
+            metadata.creator = content;
+            found = true;
+          } else if (name === 'description') {
+            metadata.description = content;
+            found = true;
+          } else if (name === 'keywords') {
+            metadata.keywords = content
+              .split(/[,;]/)
+              .map((k) => k.trim())
+              .filter(Boolean);
+            found = true;
+          } else if (name === 'subject') {
+            metadata.subject = content;
+            found = true;
+          } else if (name === 'generator') {
+            metadata.application = content;
+            found = true;
+          }
+        }
+      }
+
+      for (const child of node.children) {
+        traverse(child);
+      }
+    };
+
+    traverse(rootNode);
+    return found ? metadata : undefined;
+  }
+
+  private findFirstNode(root: XmlNode, predicate: (n: XmlNode) => boolean): XmlNode | undefined {
+    for (const child of root.children) {
+      if (predicate(child)) return child;
+      const found = this.findFirstNode(child, predicate);
+      if (found) return found;
+    }
+    return undefined;
+  }
+
   private parseHtmlToAst(rootNode: XmlNode): DocumentNode {
+    const metadata = this.extractMetadataFromHtml(rootNode);
+
+    let container = rootNode;
+    const bodyNode = this.findFirstNode(rootNode, (n) => {
+      const tag = n.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+      return tag === 'body' || tag === 'article';
+    });
+    if (bodyNode) {
+      const articleNode = this.findFirstNode(bodyNode, (n) => {
+        const tag = n.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+        return tag === 'article';
+      });
+      container = articleNode ?? bodyNode;
+    }
+
     const sections: SectionNode[] = [];
-    const sectionNodes = rootNode.children.filter((c) => c.nodeName.toLowerCase().endsWith('section'));
+    const sectionNodes = container.children.filter((c) => c.nodeName.toLowerCase().endsWith('section'));
 
     if (sectionNodes.length === 0) {
-      // Fallback: entire root is one section
-      sections.push(this.parseSectionFromHtmlNodes(rootNode.children));
+      // Fallback: entire container is one section
+      sections.push(this.parseSectionFromHtmlNodes(container.children));
     } else {
       for (const sNode of sectionNodes) {
         sections.push(this.parseSectionFromHtmlNodes(sNode.children));
@@ -197,6 +267,7 @@ export class StandardOoxenWriter implements OoxenWriter {
     return {
       type: 'document',
       sections,
+      metadata,
     };
   }
 

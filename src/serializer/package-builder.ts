@@ -1,6 +1,8 @@
 import { KNOWN_CONTENT_TYPES } from '../opc/content-types.js';
 import { createPackage, type OpcPackage } from '../opc/package.js';
 import { KNOWN_RELATIONSHIPS, type OpcRelationship } from '../opc/relationships.js';
+import type { DocumentMetadata } from '../types/ast.js';
+import { defaultMetadataBuilder, type MetadataBuilder } from './metadata-builder.js';
 import { defaultNumberingBuilder, type NumberingBuilder } from './numbering-builder.js';
 import { defaultStylesBuilder, type StylesBuilder } from './styles-builder.js';
 
@@ -32,19 +34,23 @@ export interface PackageBuilder {
     mediaParts?: ImageMediaPart[],
     headerFooterParts?: HeaderFooterPart[],
     externalRelationships?: OpcRelationship[],
+    metadata?: DocumentMetadata,
   ): OpcPackage;
 }
 
 export class StandardPackageBuilder implements PackageBuilder {
   private stylesBuilder: StylesBuilder;
   private numberingBuilder: NumberingBuilder;
+  private metadataBuilder: MetadataBuilder;
 
   constructor(
     stylesBuilder: StylesBuilder = defaultStylesBuilder,
     numberingBuilder: NumberingBuilder = defaultNumberingBuilder,
+    metadataBuilder: MetadataBuilder = defaultMetadataBuilder,
   ) {
     this.stylesBuilder = stylesBuilder;
     this.numberingBuilder = numberingBuilder;
+    this.metadataBuilder = metadataBuilder;
   }
 
   assemblePackage(
@@ -54,6 +60,7 @@ export class StandardPackageBuilder implements PackageBuilder {
     mediaParts: ImageMediaPart[] = [],
     headerFooterParts: HeaderFooterPart[] = [],
     externalRelationships: OpcRelationship[] = [],
+    metadata?: DocumentMetadata,
   ): OpcPackage {
     const pkg = createPackage();
 
@@ -136,6 +143,33 @@ export class StandardPackageBuilder implements PackageBuilder {
     // 7. Add external relationships (such as external hyperlinks)
     for (const rel of externalRelationships) {
       pkg.addRelationship('word/document.xml', rel);
+    }
+
+    // 8. Add document metadata (docProps/core.xml & docProps/app.xml) if provided
+    if (metadata) {
+      const coreXml = this.metadataBuilder.buildCorePropertiesXml(metadata);
+      pkg.addRelationship(undefined, {
+        id: 'rIdCore',
+        type: KNOWN_RELATIONSHIPS.CORE_PROPERTIES,
+        target: 'docProps/core.xml',
+      });
+      pkg.setPart({
+        name: 'docProps/core.xml',
+        contentType: KNOWN_CONTENT_TYPES.CORE_PROPERTIES,
+        data: textEncoder.encode(coreXml),
+      });
+
+      const appXml = this.metadataBuilder.buildAppPropertiesXml(metadata);
+      pkg.addRelationship(undefined, {
+        id: 'rIdApp',
+        type: KNOWN_RELATIONSHIPS.EXTENDED_PROPERTIES,
+        target: 'docProps/app.xml',
+      });
+      pkg.setPart({
+        name: 'docProps/app.xml',
+        contentType: KNOWN_CONTENT_TYPES.EXTENDED_PROPERTIES,
+        data: textEncoder.encode(appXml),
+      });
     }
 
     return pkg;

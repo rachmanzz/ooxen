@@ -28,6 +28,7 @@ export const KNOWN_CONTENT_TYPES = {
   WML_HEADER: 'application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml',
   WML_FOOTER: 'application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml',
   CORE_PROPERTIES: 'application/vnd.openxmlformats-package.core-properties+xml',
+  EXTENDED_PROPERTIES: 'application/vnd.openxmlformats-officedocument.extended-properties+xml',
 } as const;
 
 export const CONTENT_TYPES_NAMESPACE = 'http://schemas.openxmlformats.org/package/2006/content-types';
