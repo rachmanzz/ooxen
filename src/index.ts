@@ -30,6 +30,10 @@ export * from './layout/page-engine.js';
 export * from './layout/line-breaker.js';
 export * from './layout/text-metrics.js';
 export * from './layout/range-slicer.js';
+export * from './layout/hit-test.js';
+
+// Interactive Model & Document Session (Plain Object API)
+export * from './model/document-session.js';
 
 // Renderer (Canvas & HTML)
 export * from './renderer/canvas/canvas-target.js';
