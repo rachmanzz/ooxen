@@ -153,11 +153,17 @@ export function collectDocumentRevisions(doc: DocumentNode): RevisionInfo[] {
     if (block.type === 'paragraph') {
       block.children.forEach(checkRun);
     } else if (block.type === 'table') {
-      block.rows.forEach((r) => r.children.forEach((c) => c.children.forEach(checkBlock)));
+      block.rows.forEach((r) => {
+        r.children.forEach((c) => {
+          c.children.forEach(checkBlock);
+        });
+      });
     }
   };
 
-  doc.sections.forEach((s) => s.children.forEach(checkBlock));
+  doc.sections.forEach((s) => {
+    s.children.forEach(checkBlock);
+  });
   return revisions;
 }
 

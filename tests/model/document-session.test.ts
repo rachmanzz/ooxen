@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { createDocumentSession } from '../../src/model/document-session.js';
-import type { DocumentNode } from '../../src/types/ast.js';
+import type { DocumentNode, ParagraphNode } from '../../src/types/ast.js';
 
 describe('DocumentSession Plain Object API', () => {
   const initialDoc: DocumentNode = {
@@ -58,12 +58,12 @@ describe('DocumentSession Plain Object API', () => {
     const session2 = session1.applyRangeStyle(0, 5, 10, { bold: true });
 
     // Session 1 remains pristine (immutable)
-    const p1 = session1.document.sections[0]!.children[0] as typeof initialDoc.sections[0]!.children[0];
+    const p1 = session1.document.sections[0]!.children[0] as ParagraphNode;
     expect(p1.children.length).toBe(1);
     expect(p1.children[0]?.style?.bold).toBeFalsy();
 
     // Session 2 has 3 sliced runs with bold in middle
-    const p2 = session2.document.sections[0]!.children[0] as typeof initialDoc.sections[0]!.children[0];
+    const p2 = session2.document.sections[0]!.children[0] as ParagraphNode;
     expect(p2.children.length).toBe(3);
     expect(p2.children[0]?.text).toBe('Halo ');
     expect(p2.children[1]?.text).toBe('dunia');

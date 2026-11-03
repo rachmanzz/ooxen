@@ -41,4 +41,28 @@ describe('OOXML Document Parser', () => {
     const p = section?.children[0];
     expect(p?.type).toBe('paragraph');
   });
+
+  it('should safely handle prototype pollution keys and ignore DOCTYPE blocks in XML', () => {
+    const maliciousXml = `<!DOCTYPE doc [ <!ENTITY xxe "evil"> ]>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p __proto__="polluted" constructor="polluted" prototype="polluted" hasOwnProperty="safeValue">
+      <w:r><w:t>&xxe; text</w:t></w:r>
+    </w:p>
+  </w:body>
+</w:document>`;
+
+    const root = defaultXmlAdapter.parse(maliciousXml);
+    const body = root.children[0];
+    const pNode = body?.children[0];
+    expect(pNode).toBeDefined();
+
+    // Verify prototype safety
+    expect((pNode?.attributes as any).__proto__).toBeUndefined();
+    expect((pNode?.attributes as any).constructor).toBeUndefined();
+    expect((pNode?.attributes as any).prototype).toBeUndefined();
+    expect(pNode?.attributes['hasOwnProperty']).toBe('safeValue');
+    // Global Object prototype must remain untainted
+    expect(({} as any).polluted).toBeUndefined();
+  });
 });

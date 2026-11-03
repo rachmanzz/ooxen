@@ -25,14 +25,14 @@ function decodeXmlEntities(text: string): string {
 }
 
 function parseAttributes(attrString: string): Record<string, string> {
-  const attributes: Record<string, string> = {};
+  const attributes: Record<string, string> = Object.create(null);
   const attrRegex = /([a-zA-Z0-9_:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
   let match: RegExpExecArray | null;
 
   while ((match = attrRegex.exec(attrString)) !== null) {
     const key = match[1];
     const value = match[2] !== undefined ? match[2] : match[3] ?? '';
-    if (key) {
+    if (key && key !== '__proto__' && key !== 'constructor' && key !== 'prototype') {
       attributes[key] = decodeXmlEntities(value);
     }
   }
@@ -42,12 +42,16 @@ function parseAttributes(attrString: string): Record<string, string> {
 
 export class SimpleXmlAdapter implements XmlAdapter {
   parse(xmlString: string): XmlNode {
-    // Strip XML declarations and comments
-    let cleaned = xmlString.replace(/<\?xml[\s\S]*?\?>/g, '').replace(/<!--[\s\S]*?-->/g, '').trim();
+    // Strip XML declarations, DOCTYPE DTD declarations, and comments
+    let cleaned = xmlString
+      .replace(/<\?xml[\s\S]*?\?>/g, '')
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<!DOCTYPE[\s\S]*?>/gi, '')
+      .trim();
 
     const root: XmlNode = {
       nodeName: '__root__',
-      attributes: {},
+      attributes: Object.create(null),
       children: [],
       textContent: '',
     };

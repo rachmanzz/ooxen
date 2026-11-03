@@ -22,9 +22,19 @@ export class FflateZipReader implements ZipReader {
     for (const [rawPath, data] of Object.entries(unzipped)) {
       // Normalize path: replace backslashes and remove leading slash
       const normalizedPath = rawPath.replace(/\\/g, '/').replace(/^\/+/, '');
-      if (normalizedPath.length > 0 && !normalizedPath.endsWith('/')) {
-        result.set(normalizedPath, data);
+      if (normalizedPath.length === 0 || normalizedPath.endsWith('/')) {
+        continue;
       }
+
+      // ISO/IEC 29500-2 §9.1.1 & Anti-Zip Slip Protection:
+      // Part names must not contain empty segments, single-dot ('.'), or double-dot ('..') segments.
+      const segments = normalizedPath.split('/');
+      const isInvalid = segments.some((segment) => segment === '' || segment === '.' || segment === '..');
+      if (isInvalid) {
+        continue;
+      }
+
+      result.set(normalizedPath, data);
     }
 
     return result;

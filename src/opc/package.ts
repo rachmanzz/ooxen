@@ -38,6 +38,13 @@ export interface OpcPackage {
   serialize(): Promise<Uint8Array>;
 }
 
+export function isValidPartName(name: string): boolean {
+  const normalized = name.replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!normalized || normalized.endsWith('/')) return false;
+  const segments = normalized.split('/');
+  return !segments.some((segment) => segment === '' || segment === '.' || segment === '..');
+}
+
 function normalizePartName(name: string): string {
   return name.replace(/\\/g, '/').replace(/^\/+/, '');
 }
@@ -56,6 +63,9 @@ export class StandardOpcPackage implements OpcPackage {
   }
 
   setPart(part: OpcPart): void {
+    if (!isValidPartName(part.name)) {
+      throw new Error(`Invalid OPC part name "${part.name}": contains traversal or empty segments (ISO/IEC 29500-2 §9.1.1)`);
+    }
     const normalized = normalizePartName(part.name);
     this.parts.set(normalized, {
       ...part,

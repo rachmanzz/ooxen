@@ -4,7 +4,7 @@ import { StandardDocumentParser } from '../../src/parser/wml/document-parser.js'
 import { defaultXmlAdapter } from '../../src/parser/xml-adapter.js';
 import { StandardHtmlRenderer } from '../../src/renderer/html/html-renderer.js';
 import { exportOoxml, exportOoxmlFromHtml } from '../../src/serializer/ooxen-writer.js';
-import type { DocumentNode } from '../../src/types/ast.js';
+import type { DocumentNode, ParagraphNode, TableNode } from '../../src/types/ast.js';
 
 describe('Bidirectional Round-Trip Integration', () => {
   const decoder = new TextDecoder();
@@ -86,7 +86,7 @@ describe('Bidirectional Round-Trip Integration', () => {
     expect(section.children.length).toBe(2);
 
     // Verify Paragraph 1
-    const p1 = section.children[0] as typeof originalDoc.sections[0]!.children[0];
+    const p1 = section.children[0] as ParagraphNode;
     expect(p1.type).toBe('paragraph');
     expect(p1.style?.alignment).toBe('center');
     expect(p1.style?.spaceBeforePt).toBe(10);
@@ -99,7 +99,7 @@ describe('Bidirectional Round-Trip Integration', () => {
     expect(r1.style?.color).toBe('#002060');
 
     // Verify Table
-    const table = section.children[1] as typeof originalDoc.sections[0]!.children[1];
+    const table = section.children[1] as TableNode;
     expect(table.type).toBe('table');
     expect(table.rows.length).toBe(1);
     expect(table.rows[0]?.children[0]?.colSpan).toBe(2);

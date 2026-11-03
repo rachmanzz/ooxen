@@ -64,4 +64,25 @@ describe('OPC Package Integration', () => {
     expect(docRels.length).toBe(1);
     expect(docRels[0]?.target).toBe('styles.xml');
   });
+
+  it('should throw error when setPart receives invalid part name with traversal (ISO/IEC 29500-2 §9.1.1)', () => {
+    const pkg = createPackage();
+    const encoder = new TextEncoder();
+
+    expect(() => {
+      pkg.setPart({
+        name: '../../etc/passwd',
+        contentType: 'text/plain',
+        data: encoder.encode('malicious'),
+      });
+    }).toThrow('Invalid OPC part name');
+
+    expect(() => {
+      pkg.setPart({
+        name: 'word/./current.xml',
+        contentType: 'text/plain',
+        data: encoder.encode('malicious'),
+      });
+    }).toThrow('Invalid OPC part name');
+  });
 });
