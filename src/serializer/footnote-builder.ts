@@ -22,20 +22,16 @@ export class StandardFootnoteBuilder implements FootnoteBuilder {
       '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">',
     ];
 
-    const hasSeparator = footnotes.some((fn) => fn.typeCategory === 'separator' || fn.id === -1);
-    const hasContinuation = footnotes.some((fn) => fn.typeCategory === 'continuationSeparator' || fn.id === 0);
-
-    if (!hasSeparator) {
-      lines.push('  <w:footnote w:type="separator" w:id="-1">');
-      lines.push('    <w:p><w:r><w:separator/></w:r></w:p>');
-      lines.push('  </w:footnote>');
-    }
-
-    if (!hasContinuation) {
-      lines.push('  <w:footnote w:type="continuationSeparator" w:id="0">');
-      lines.push('    <w:p><w:r><w:continuationSeparator/></w:r></w:p>');
-      lines.push('  </w:footnote>');
-    }
+    // Separator/continuationSeparator footnotes (ids -1/0) are required by
+    // Word for correct footnote rendering. The parser represents their
+    // <w:separator/> mark as an empty run (text-position limitation), so they
+    // are always re-emitted canonically rather than serialized from the AST.
+    lines.push('  <w:footnote w:type="separator" w:id="-1">');
+    lines.push('    <w:p><w:r><w:separator/></w:r></w:p>');
+    lines.push('  </w:footnote>');
+    lines.push('  <w:footnote w:type="continuationSeparator" w:id="0">');
+    lines.push('    <w:p><w:r><w:continuationSeparator/></w:r></w:p>');
+    lines.push('  </w:footnote>');
 
     for (const fn of footnotes) {
       if (fn.id === -1 || fn.id === 0) continue;
@@ -61,20 +57,13 @@ export class StandardFootnoteBuilder implements FootnoteBuilder {
       '<w:endnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">',
     ];
 
-    const hasSeparator = endnotes.some((en) => en.typeCategory === 'separator' || en.id === -1);
-    const hasContinuation = endnotes.some((en) => en.typeCategory === 'continuationSeparator' || en.id === 0);
-
-    if (!hasSeparator) {
-      lines.push('  <w:endnote w:type="separator" w:id="-1">');
-      lines.push('    <w:p><w:r><w:separator/></w:r></w:p>');
-      lines.push('  </w:endnote>');
-    }
-
-    if (!hasContinuation) {
-      lines.push('  <w:endnote w:type="continuationSeparator" w:id="0">');
-      lines.push('    <w:p><w:r><w:continuationSeparator/></w:r></w:p>');
-      lines.push('  </w:endnote>');
-    }
+    // Same canonical separator handling as footnotes (see above).
+    lines.push('  <w:endnote w:type="separator" w:id="-1">');
+    lines.push('    <w:p><w:r><w:separator/></w:r></w:p>');
+    lines.push('  </w:endnote>');
+    lines.push('  <w:endnote w:type="continuationSeparator" w:id="0">');
+    lines.push('    <w:p><w:r><w:continuationSeparator/></w:r></w:p>');
+    lines.push('  </w:endnote>');
 
     for (const en of endnotes) {
       if (en.id === -1 || en.id === 0) continue;

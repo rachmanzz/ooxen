@@ -290,12 +290,18 @@ export class StandardDocumentParser implements DocumentParser {
           imageResolver,
           hyperlinkResolver,
         );
-        currentBlocks.push(paragraph);
 
         // Check if paragraph contains section break in pPr
         const pPr = child.children.find((c) => c.nodeName.toLowerCase().endsWith('ppr'));
         const sectPr = pPr?.children.find((c) => c.nodeName.toLowerCase().endsWith('sectpr'));
         if (sectPr) {
+          // The paragraph carrying w:sectPr is the section delimiter itself.
+          // When it has no content (the common case emitted by the writer),
+          // it must not also become a content block, or round-tripping
+          // duplicates an empty paragraph at every section boundary.
+          if (paragraph.children.length > 0) {
+            currentBlocks.push(paragraph);
+          }
           const { headers, footers } = parseSectionHeaderFooterReferences(sectPr, headerFooterResolver);
           sections.push({
             type: 'section',
@@ -305,6 +311,8 @@ export class StandardDocumentParser implements DocumentParser {
             footers,
           });
           currentBlocks = [];
+        } else {
+          currentBlocks.push(paragraph);
         }
       } else if (tag === 'tbl') {
         const table = this.tableParser.parseTable(child, styleResolver, numberingResolver);
