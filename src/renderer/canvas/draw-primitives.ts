@@ -1,6 +1,6 @@
 import type { DrawingShapeNode, ImageNode } from '../../types/ast.js';
 import type { Rect } from '../../types/common.js';
-import type { TextStyle } from '../../types/style.js';
+import type { TabLeader, TextStyle } from '../../types/style.js';
 import type { CanvasTarget } from './canvas-target.js';
 
 /**
@@ -12,6 +12,7 @@ export interface DrawPrimitives {
   drawRect(target: CanvasTarget, rect: Rect, fillColor?: string, strokeColor?: string, strokeWidth?: number): void;
   drawShape(target: CanvasTarget, shape: DrawingShapeNode, x: number, y: number): void;
   drawImage(target: CanvasTarget, image: ImageNode, x: number, y: number): void;
+  drawLeader(target: CanvasTarget, leader: TabLeader, x: number, y: number, width: number, baseline: number, style?: TextStyle): void;
 }
 
 export class StandardDrawPrimitives implements DrawPrimitives {
@@ -146,6 +147,41 @@ export class StandardDrawPrimitives implements DrawPrimitives {
         target.fillText(image.altText ?? image.name ?? '[Image]', x + 4, y + image.heightPt / 2);
       }
     }
+    target.restore();
+  }
+
+  drawLeader(target: CanvasTarget, leader: TabLeader, x: number, y: number, width: number, baseline: number, style?: TextStyle): void {
+    if (!leader || leader === 'none' || width <= 0) return;
+
+    const fontSize = style?.fontSizePt ?? 11;
+    const fontFamily = style?.fontFamily ?? 'Calibri, sans-serif';
+    const color = style?.color ?? '#000000';
+
+    target.save();
+    target.fillStyle = color;
+    target.font = `${fontSize}pt ${fontFamily}`;
+
+    if (leader === 'dot' || leader === 'middleDot') {
+      const char = leader === 'middleDot' ? '·' : '.';
+      const step = 6;
+      const dotY = leader === 'middleDot' ? y + baseline - fontSize * 0.25 : y + baseline;
+      for (let dx = 2; dx < width - 2; dx += step) {
+        target.fillText(char, x + dx, dotY);
+      }
+    } else if (leader === 'hyphen') {
+      const step = 8;
+      const hyphenWidth = 4;
+      const hyphenY = y + baseline - fontSize * 0.3;
+      for (let dx = 2; dx < width - 2; dx += step) {
+        const segWidth = Math.min(hyphenWidth, width - dx - 2);
+        target.fillRect(x + dx, hyphenY, segWidth, 1);
+      }
+    } else if (leader === 'underscore') {
+      target.fillRect(x, y + baseline + 1.5, width, 1);
+    } else if (leader === 'heavy') {
+      target.fillRect(x, y + baseline + 1.5, width, 2);
+    }
+
     target.restore();
   }
 }

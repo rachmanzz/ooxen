@@ -4,6 +4,15 @@
 
 export type TextAlignment = 'left' | 'center' | 'right' | 'justify';
 
+export type TabStopAlignment = 'left' | 'center' | 'right' | 'decimal' | 'bar' | 'clear';
+export type TabLeader = 'none' | 'dot' | 'hyphen' | 'underscore' | 'heavy' | 'middleDot';
+
+export interface TabStop {
+  positionPt: number; // position from left margin in points (converted from twips)
+  alignment: TabStopAlignment; // default: 'left'
+  leader?: TabLeader; // default: 'none'
+}
+
 export interface TextStyle {
   fontFamily?: string;
   fontSizePt?: number;
@@ -35,6 +44,7 @@ export interface ParagraphStyle {
   pageBreakBefore?: boolean;
   keepNext?: boolean;
   keepLines?: boolean;
+  tabStops?: TabStop[];
 }
 
 export interface TableCellStyle {

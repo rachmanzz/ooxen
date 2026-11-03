@@ -1,5 +1,5 @@
 import { twipsToPt } from '../../types/common.js';
-import type { ParagraphStyle, TextStyle } from '../../types/style.js';
+import type { ParagraphStyle, TabLeader, TabStop, TabStopAlignment, TextStyle } from '../../types/style.js';
 import type { XmlNode } from '../xml-adapter.js';
 
 /**
@@ -136,6 +136,32 @@ export function parseParagraphProperties(node?: XmlNode): ParagraphStyle {
       }
       case 'keeplines': {
         style.keepLines = val === undefined || val === 'true' || val === '1' || val === 'on';
+        break;
+      }
+      case 'tabs': {
+        const tabStops: TabStop[] = [];
+        for (const tabChild of child.children) {
+          const tabTag = tabChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+          if (tabTag === 'tab') {
+            const tabVal = (tabChild.attributes['w:val'] ?? tabChild.attributes['val'] ?? 'left').toLowerCase();
+            const tabPos = tabChild.attributes['w:pos'] ?? tabChild.attributes['pos'];
+            const tabLeader = (tabChild.attributes['w:leader'] ?? tabChild.attributes['leader'] ?? 'none').toLowerCase();
+            if (tabPos) {
+              tabStops.push({
+                positionPt: twipsToPt(Number(tabPos)),
+                alignment: (['left', 'center', 'right', 'decimal', 'bar', 'clear'].includes(tabVal)
+                  ? tabVal
+                  : 'left') as TabStopAlignment,
+                leader: (['none', 'dot', 'hyphen', 'underscore', 'heavy', 'middleDot'].includes(tabLeader)
+                  ? tabLeader
+                  : 'none') as TabLeader,
+              });
+            }
+          }
+        }
+        if (tabStops.length > 0) {
+          style.tabStops = tabStops;
+        }
         break;
       }
     }

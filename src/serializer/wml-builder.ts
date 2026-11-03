@@ -355,6 +355,16 @@ export class StandardWmlBuilder implements WmlBuilder {
       inner.push('      <w:keepLines/>');
     }
 
+    if (style.tabStops && style.tabStops.length > 0) {
+      const tabElements = style.tabStops.map((ts) => {
+        const valAttr = `w:val="${ts.alignment ?? 'left'}"`;
+        const posAttr = `w:pos="${Math.round(ptToTwips(ts.positionPt))}"`;
+        const leaderAttr = ts.leader && ts.leader !== 'none' ? ` w:leader="${ts.leader}"` : '';
+        return `        <w:tab ${valAttr} ${posAttr}${leaderAttr}/>`;
+      });
+      inner.push(['      <w:tabs>', ...tabElements, '      </w:tabs>'].join('\n'));
+    }
+
     if (inner.length === 0) return '';
     return ['      <w:pPr>', ...inner, '      </w:pPr>'].join('\n');
   }
@@ -363,19 +373,30 @@ export class StandardWmlBuilder implements WmlBuilder {
     const rPr = this.serializeRunProperties(r.style);
     const textPieces: string[] = [];
 
-    // Split text by newlines into text and breaks
+    // Split text by newlines into text and breaks, and by tabs into text and w:tab
     const parts = r.text.split('\n');
     const textTag = r.revision?.type === 'delete' ? 'w:delText' : 'w:t';
     for (let i = 0; i < parts.length; i++) {
       const text = parts[i]!;
-      if (text.length > 0) {
-        const needsPreserve = text.startsWith(' ') || text.endsWith(' ') || text.includes('  ');
-        const preserveAttr = needsPreserve ? ' xml:space="preserve"' : '';
-        textPieces.push(`      <${textTag}${preserveAttr}>${escapeXml(text)}</${textTag}>`);
+      const tabParts = text.split('\t');
+      for (let t = 0; t < tabParts.length; t++) {
+        const subText = tabParts[t]!;
+        if (subText.length > 0) {
+          const needsPreserve = subText.startsWith(' ') || subText.endsWith(' ') || subText.includes('  ');
+          const preserveAttr = needsPreserve ? ' xml:space="preserve"' : '';
+          textPieces.push(`      <${textTag}${preserveAttr}>${escapeXml(subText)}</${textTag}>`);
+        }
+        if (t < tabParts.length - 1) {
+          textPieces.push('      <w:tab/>');
+        }
       }
       if (i < parts.length - 1) {
         textPieces.push('      <w:br/>');
       }
+    }
+
+    if (r.isTab && (!r.text || r.text.length === 0)) {
+      textPieces.push('      <w:tab/>');
     }
 
     const drawingXml = r.drawing ? this.serializeDrawing(r.drawing) : '';
@@ -392,7 +413,7 @@ export class StandardWmlBuilder implements WmlBuilder {
         : '      <w:br w:type="column"/>'
       : '';
 
-    if (textPieces.length === 0 && !rPr && !drawingXml && !imageXml && !footnoteRefXml && !footnoteMarkXml && !breakXml) {
+    if (textPieces.length === 0 && !r.isTab && !rPr && !drawingXml && !imageXml && !footnoteRefXml && !footnoteMarkXml && !breakXml) {
       return '';
     }
 

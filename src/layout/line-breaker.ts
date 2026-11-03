@@ -8,7 +8,7 @@ import type {
   RunNode,
 } from '../types/ast.js';
 import type { Rect } from '../types/common.js';
-import type { TextStyle } from '../types/style.js';
+import type { TabLeader, TabStop, TextStyle } from '../types/style.js';
 import { defaultTextMetrics, type TextMetricsMeasurer } from './text-metrics.js';
 
 /**
@@ -27,6 +27,8 @@ export interface LineFragment {
   commentId?: string;
   breakType?: 'page' | 'column';
   revision?: RevisionInfo;
+  isTab?: boolean;
+  tabLeader?: TabLeader;
 }
 
 export interface LayoutLine {
@@ -43,6 +45,8 @@ export interface LineBreaker {
 interface WordToken {
   text: string;
   isSpace: boolean;
+  isTab?: boolean;
+  tabLeader?: TabLeader;
   width: number;
   height: number;
   ascent: number;
@@ -147,6 +151,14 @@ export class StandardLineBreaker implements LineBreaker {
         continue;
       }
 
+      if (token.isTab) {
+        const lineStartX = indentLeft + (isFirstLine ? firstLineIndent : 0);
+        const currentXFromMargin = lineStartX + currentLineWidth;
+        const computed = this.computeTabToken(i, tokens, currentXFromMargin, pStyle?.tabStops);
+        token.width = computed.width;
+        token.tabLeader = computed.leader;
+      }
+
       // Check if adding this token overflows
       if (currentLineWidth + token.width > maxLineWidth && currentTokens.length > 0) {
         // If the current token is a space at the end of the line, skip it
@@ -167,6 +179,13 @@ export class StandardLineBreaker implements LineBreaker {
         currentTokens = [];
         currentLineWidth = 0;
         isFirstLine = false;
+
+        if (token.isTab) {
+          const newLineStartX = indentLeft + (isFirstLine ? firstLineIndent : 0);
+          const computed = this.computeTabToken(i, tokens, newLineStartX, pStyle?.tabStops);
+          token.width = computed.width;
+          token.tabLeader = computed.leader;
+        }
       }
 
       // Avoid leading spaces on a new line
@@ -243,7 +262,15 @@ export class StandardLineBreaker implements LineBreaker {
                 currentWord = '';
               }
               tokens.push(this.createToken('\n', false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId, run.revision));
-            } else if (char === ' ' || char === '\t') {
+            } else if (char === '\t') {
+              if (currentWord.length > 0) {
+                tokens.push(this.createToken(currentWord, false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId, run.revision));
+                currentWord = '';
+              }
+              const tabToken = this.createToken('\t', false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId, run.revision);
+              tabToken.isTab = true;
+              tokens.push(tabToken);
+            } else if (char === ' ') {
               if (currentWord.length > 0) {
                 tokens.push(this.createToken(currentWord, false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId, run.revision));
                 currentWord = '';
@@ -274,7 +301,14 @@ export class StandardLineBreaker implements LineBreaker {
       }
 
       const text = run.text;
-      if (!text) continue;
+      if (!text) {
+        if (run.isTab) {
+          const tabToken = this.createToken('\t', false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId, run.revision);
+          tabToken.isTab = true;
+          tokens.push(tabToken);
+        }
+        continue;
+      }
 
       let currentWord = '';
       for (let i = 0; i < text.length; i++) {
@@ -286,7 +320,15 @@ export class StandardLineBreaker implements LineBreaker {
             currentWord = '';
           }
           tokens.push(this.createToken('\n', false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId, run.revision));
-        } else if (char === ' ' || char === '\t') {
+        } else if (char === '\t') {
+          if (currentWord.length > 0) {
+            tokens.push(this.createToken(currentWord, false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId, run.revision));
+            currentWord = '';
+          }
+          const tabToken = this.createToken('\t', false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId, run.revision);
+          tabToken.isTab = true;
+          tokens.push(tabToken);
+        } else if (char === ' ') {
           if (currentWord.length > 0) {
             tokens.push(this.createToken(currentWord, false, run.style, run.hyperlink, run.bookmarkName, run.footnoteRef, run.commentId, run.revision));
             currentWord = '';
@@ -303,6 +345,55 @@ export class StandardLineBreaker implements LineBreaker {
     }
 
     return tokens;
+  }
+
+  private computeTabToken(
+    tokenIndex: number,
+    tokens: WordToken[],
+    currentXFromMargin: number,
+    tabStops?: TabStop[],
+  ): { width: number; leader?: TabLeader } {
+    const defaultInterval = 36; // 720 twips = 36 pt
+
+    // Look for the next custom tab stop ahead of current position
+    const matchedStop = (tabStops ?? [])
+      .filter((ts) => ts.positionPt > currentXFromMargin + 2 && ts.alignment !== 'clear')
+      .sort((a, b) => a.positionPt - b.positionPt)[0];
+
+    if (matchedStop) {
+      if (matchedStop.alignment === 'right') {
+        let followingWidth = 0;
+        for (let j = tokenIndex + 1; j < tokens.length; j++) {
+          const nextT = tokens[j]!;
+          if (nextT.isTab || nextT.text === '\n' || nextT.breakType) break;
+          followingWidth += nextT.width;
+        }
+        const targetX = matchedStop.positionPt - followingWidth;
+        const width = Math.max(8, targetX - currentXFromMargin);
+        return { width, leader: matchedStop.leader };
+      }
+
+      if (matchedStop.alignment === 'center') {
+        let followingWidth = 0;
+        for (let j = tokenIndex + 1; j < tokens.length; j++) {
+          const nextT = tokens[j]!;
+          if (nextT.isTab || nextT.text === '\n' || nextT.breakType) break;
+          followingWidth += nextT.width;
+        }
+        const targetX = matchedStop.positionPt - followingWidth / 2;
+        const width = Math.max(8, targetX - currentXFromMargin);
+        return { width, leader: matchedStop.leader };
+      }
+
+      // 'left', 'decimal', 'bar', etc.
+      const width = Math.max(8, matchedStop.positionPt - currentXFromMargin);
+      return { width, leader: matchedStop.leader };
+    }
+
+    // Default tab stop
+    const nextDefault = Math.floor((currentXFromMargin + 2) / defaultInterval + 1) * defaultInterval;
+    const width = Math.max(8, nextDefault - currentXFromMargin);
+    return { width, leader: 'none' };
   }
 
   private createToken(
@@ -406,6 +497,8 @@ export class StandardLineBreaker implements LineBreaker {
         commentId: token.commentId,
         breakType: token.breakType,
         revision: token.revision,
+        isTab: token.isTab,
+        tabLeader: token.tabLeader,
         bounds: {
           x: currentX,
           y: maxAscent - token.ascent, // baseline alignment

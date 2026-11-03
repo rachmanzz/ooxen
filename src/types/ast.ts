@@ -100,6 +100,7 @@ export interface RunNode extends BaseASTNode {
   commentId?: string;
   breakType?: 'page' | 'column';
   revision?: RevisionInfo;
+  isTab?: boolean;
 }
 
 export interface ParagraphNode extends BaseASTNode {

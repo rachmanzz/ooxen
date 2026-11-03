@@ -239,13 +239,17 @@ export class StandardHtmlRenderer implements HtmlRenderer {
     const styleAttr = Object.keys(cssObj).length > 0 ? ` style="${escapeXml(this.styleMapper.toCssString(cssObj))}"` : '';
     const idAttr = run.bookmarkName ? ` id="${escapeXml(run.bookmarkName)}"` : '';
 
-    // Convert newlines in run text to self-closing <br/> tags
-    const escaped = escapeXml(run.text).replace(/\n/g, '<br/>');
+    // Convert newlines in run text to self-closing <br/> tags and tabs to tab spans
+    const escaped = escapeXml(run.text)
+      .replace(/\n/g, '<br/>')
+      .replace(/\t/g, '<span class="ooxen-tab">&#9;</span>');
     const shapeSvg = run.drawing ? renderShapeToSvg(run.drawing) : '';
     const imageHtml = run.image ? renderImageToHtml(run.image) : '';
     const fieldClass = run.field ? ` ooxen-field-${run.field.toLowerCase()}` : '';
+    const tabClass = run.isTab ? ' ooxen-tab-run' : '';
 
-    const spanHtml = `<span class="ooxen-r${fieldClass}"${idAttr}${styleAttr}>${escaped}${shapeSvg}${imageHtml}</span>`;
+    const content = escaped.length > 0 ? escaped : (run.isTab ? '<span class="ooxen-tab">&#9;</span>' : '');
+    const spanHtml = `<span class="ooxen-r${fieldClass}${tabClass}"${idAttr}${styleAttr}>${content}${shapeSvg}${imageHtml}</span>`;
 
     let outHtml = spanHtml;
 

@@ -130,6 +130,18 @@ export class StandardPageRenderer implements PageRenderer {
           this.primitives.drawShape(target, fragment.drawing, fragX, fragY);
         } else if (fragment.image) {
           this.primitives.drawImage(target, fragment.image, fragX, fragY);
+        } else if (fragment.isTab) {
+          if (fragment.tabLeader && fragment.tabLeader !== 'none') {
+            this.primitives.drawLeader(
+              target,
+              fragment.tabLeader,
+              fragX,
+              fragY,
+              fragment.bounds.width,
+              line.baseline,
+              fragment.style,
+            );
+          }
         } else {
           let style = fragment.style;
           if (fragment.revision) {
