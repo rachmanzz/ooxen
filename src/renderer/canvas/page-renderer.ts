@@ -82,7 +82,14 @@ export class StandardPageRenderer implements PageRenderer {
       );
     }
 
-    // 3. Render header lines if present
+    // 3. Render table cell backgrounds and borders if present
+    if (page.cellBoxes && page.cellBoxes.length > 0) {
+      for (const cell of page.cellBoxes) {
+        this.primitives.drawCellBox(target, cell);
+      }
+    }
+
+    // 4. Render header lines if present
     if (page.headerLines) {
       if (options?.onHeader) {
         options.onHeader(page.headerLines, page);

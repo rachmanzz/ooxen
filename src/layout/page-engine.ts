@@ -7,12 +7,52 @@ import type {
   SectionNode,
   TableNode,
 } from '../types/ast.js';
-import type { Margins, Size } from '../types/common.js';
+import type { Margins, Rect, Size } from '../types/common.js';
 import { defaultLineBreaker, type LayoutLine, type LineBreaker } from './line-breaker.js';
 
 /**
  * Geometric layout and pagination model according to ISO/IEC 29500-1.
  */
+
+export interface BorderStyle {
+  style?: string; // 'single' | 'dashed' | 'dotted' | 'double' | 'wave' | 'none';
+  widthPt?: number;
+  color?: string;
+}
+
+export interface CellBox {
+  bounds: Rect; // page-space coordinates
+  backgroundColor?: string;
+  borderTop?: BorderStyle;
+  borderRight?: BorderStyle;
+  borderBottom?: BorderStyle;
+  borderLeft?: BorderStyle;
+}
+
+export function parseBorderStyle(borderStr?: string): BorderStyle | undefined {
+  if (!borderStr || borderStr === 'none' || borderStr === 'nil') return undefined;
+
+  const parts = borderStr.trim().split(/\s+/);
+  let style = 'single';
+  let widthPt = 1;
+  let color = '#000000';
+
+  for (const part of parts) {
+    if (part.endsWith('pt')) {
+      const num = parseFloat(part);
+      if (!Number.isNaN(num)) widthPt = num;
+    } else if (part.endsWith('px')) {
+      const num = parseFloat(part);
+      if (!Number.isNaN(num)) widthPt = num * 0.75;
+    } else if (part.startsWith('#') || part.startsWith('rgb')) {
+      color = part;
+    } else if (['single', 'solid', 'dashed', 'dotted', 'double', 'wave'].includes(part.toLowerCase())) {
+      style = part.toLowerCase() === 'solid' ? 'single' : part.toLowerCase();
+    }
+  }
+
+  return { style, widthPt, color };
+}
 
 export interface PageLayout {
   pageIndex: number; // 0-based physical page index
@@ -23,6 +63,7 @@ export interface PageLayout {
   size: Size; // points
   margins: Margins; // points
   lines: LayoutLine[];
+  cellBoxes?: CellBox[];
   headerLines?: LayoutLine[];
   footerLines?: LayoutLine[];
   footnoteLines?: LayoutLine[];
@@ -198,6 +239,7 @@ export class StandardPageEngine implements PageEngine {
       let currentPageIndex = pages.length;
       let sectionPageIndex = 0;
       let currentLines: LayoutLine[] = [];
+      let currentCellBoxes: CellBox[] = [];
       let currentColumnIndex = 0;
       let currentY = 0; // vertical position inside content box (0 to contentHeight)
 
@@ -205,6 +247,7 @@ export class StandardPageEngine implements PageEngine {
         currentPageIndex = resumedPage.pageIndex;
         sectionPageIndex = resumedMeta ? resumedMeta.sectionPageIndex : 0;
         currentLines = [...resumedPage.lines];
+        currentCellBoxes = [...(resumedPage.cellBoxes ?? [])];
         currentY = resumedUsedHeight + 12;
         currentLogicalPageNumber = resumedPage.pageNumber;
       }
@@ -219,6 +262,7 @@ export class StandardPageEngine implements PageEngine {
           size: { ...pageSize },
           margins: { ...margins },
           lines: currentLines,
+          cellBoxes: currentCellBoxes.length > 0 ? currentCellBoxes : undefined,
         };
         pages.push(page);
         pageMetas.push({ page, section, sectionPageIndex });
@@ -226,6 +270,7 @@ export class StandardPageEngine implements PageEngine {
         sectionPageIndex++;
         currentPageIndex++;
         currentLines = [];
+        currentCellBoxes = [];
         currentColumnIndex = 0;
         currentY = 0;
       };
@@ -311,6 +356,9 @@ export class StandardPageEngine implements PageEngine {
             (newY) => {
               currentY = newY;
             },
+            (cellBox) => {
+              currentCellBoxes.push(cellBox);
+            },
           );
         } else if (block.type === 'drawing') {
           if (currentY + block.heightPt > contentHeight && (currentLines.length > 0 || currentColumnIndex > 0)) {
@@ -357,7 +405,7 @@ export class StandardPageEngine implements PageEngine {
         }
       }
 
-      if (currentLines.length > 0 || pages.length === 0) {
+      if (currentLines.length > 0 || currentCellBoxes.length > 0 || pages.length === 0) {
         emitPage();
       }
     }
@@ -609,6 +657,7 @@ export class StandardPageEngine implements PageEngine {
     onPageOverflow: () => void,
     getY: () => number,
     setY: (y: number) => void,
+    pushCellBox?: (cell: CellBox) => void,
   ): void {
     let y = getY();
     const rowCount = table.rows.length;
@@ -638,7 +687,8 @@ export class StandardPageEngine implements PageEngine {
       }
     }
 
-    for (const row of table.rows) {
+    for (let rIndex = 0; rIndex < rowCount; rIndex++) {
+      const row = table.rows[rIndex]!;
       const cellCount = row.children.length;
       if (cellCount === 0) continue;
 
@@ -801,6 +851,19 @@ export class StandardPageEngine implements PageEngine {
               (newY) => {
                 nestedY = newY;
               },
+              pushCellBox
+                ? (nestedCell) => {
+                    pushCellBox({
+                      ...nestedCell,
+                      bounds: {
+                        x: cellXPositions[c]! + padLeft + nestedCell.bounds.x,
+                        y: margins.top + y + padTop + nestedCell.bounds.y,
+                        width: nestedCell.bounds.width,
+                        height: nestedCell.bounds.height,
+                      },
+                    });
+                  }
+                : undefined,
             );
             cellY = nestedY;
           }
@@ -823,14 +886,45 @@ export class StandardPageEngine implements PageEngine {
         y = 0;
       }
 
-      // Place cell lines into page with vertical alignment applied
+      const isFirstRow = rIndex === 0;
+      const isLastRow = rIndex === rowCount - 1;
+
+      // Place cell lines and cell boxes into page with vertical alignment applied
       for (let c = 0; c < cellCount; c++) {
         const cell = row.children[c]!;
         const cellX = cellXPositions[c]!;
+        const cellW = cellWidths[c]!;
         const lines = cellLinesMap[c] ?? [];
         const pad = cellPaddings[c]!;
         const contentH = cellContentHeights[c]!;
         const vAlign = cell.style?.verticalAlign ?? 'top';
+
+        const isFirstCol = c === 0;
+        const isLastCol = c === cellCount - 1;
+
+        if (pushCellBox) {
+          const bg = cell.style?.backgroundColor;
+          const bTop = parseBorderStyle(cell.style?.borderTop ?? (isFirstRow ? table.style?.borderTop : table.style?.borderInsideH));
+          const bBottom = parseBorderStyle(cell.style?.borderBottom ?? (isLastRow ? table.style?.borderBottom : table.style?.borderInsideH));
+          const bLeft = parseBorderStyle(cell.style?.borderLeft ?? (isFirstCol ? table.style?.borderLeft : table.style?.borderInsideV));
+          const bRight = parseBorderStyle(cell.style?.borderRight ?? (isLastCol ? table.style?.borderRight : table.style?.borderInsideV));
+
+          if (bg || bTop || bBottom || bLeft || bRight) {
+            pushCellBox({
+              bounds: {
+                x: cellX,
+                y: margins.top + y,
+                width: cellW,
+                height: rowHeight,
+              },
+              backgroundColor: bg,
+              borderTop: bTop,
+              borderBottom: bBottom,
+              borderLeft: bLeft,
+              borderRight: bRight,
+            });
+          }
+        }
 
         const extraSpace = rowHeight - pad.top - pad.bottom - contentH;
         let vOffset = pad.top;
