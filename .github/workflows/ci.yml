@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test & typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Unit tests (bun test)
+        run: npx bun test
+
+      - name: Typecheck (src)
+        run: npm run typecheck
+
+      - name: Typecheck (tests)
+        run: npm run typecheck:tests
+
+      - name: ISO/IEC 29500 external audit (XSD + python-docx)
+        run: |
+          python3 -m pip install --quiet lxml python-docx
+          npm run audit:validate
+
+  package:
+    name: Packaging (install-as-consumer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies & build
+        run: npm install && npm run build
+
+      - name: Pack
+        run: npm pack
+
+      - name: Install tarball in a clean consumer sandbox
+        run: |
+          mkdir -p /tmp/consumer && cd /tmp/consumer
+          npm init -y
+          TGZ="$(ls "$GITHUB_WORKSPACE"/rahmantech-ooxen-*.tgz | head -1)"
+          npm install "$TGZ"
+
+      - name: Verify CJS require, ESM import, and round-trip
+        run: |
+          cd /tmp/consumer
+          node --input-type=module -e "
+            import { createRequire } from 'node:module';
+            import { readFileSync } from 'node:fs';
+            import { openDocument, exportOoxml, VERSION } from '@rahmantech/ooxen';
+            const require = createRequire(import.meta.url);
+            const pkg = JSON.parse(readFileSync('/tmp/consumer/node_modules/@rahmantech/ooxen/package.json', 'utf8'));
+            if (VERSION !== pkg.version) {
+              throw new Error('VERSION constant out of sync with package.json');
+            }
+            const doc = {
+              type: 'document',
+              sections: [{
+                type: 'section',
+                properties: { pageSize: { width: 612, height: 792 }, margins: { top: 72, right: 72, bottom: 72, left: 72 } },
+                children: [{ type: 'paragraph', children: [{ type: 'run', text: 'CI round-trip' }] }],
+              }],
+            };
+            const bytes = await exportOoxml(doc);
+            const reopened = await openDocument(bytes);
+            const text = reopened.sections[0].children[0].children.map((r) => r.text).join('');
+            if (text !== 'CI round-trip') throw new Error('round-trip text mismatch: ' + text);
+            console.log('packaging OK — VERSION', VERSION, '| round-trip OK');
+          "
+
+          node -e "
+            const o = require('@rahmantech/ooxen');
+            if (!o.openDocument || !o.exportOoxml) throw new Error('CJS exports missing');
+            console.log('CJS require OK — exports:', Object.keys(o).length);
+          "
