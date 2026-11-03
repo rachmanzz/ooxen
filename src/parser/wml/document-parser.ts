@@ -14,6 +14,7 @@ import type {
 } from '../../types/ast.js';
 import { twipsToPt } from '../../types/common.js';
 import { openPackage, type OpcPackage } from '../../opc/package.js';
+import { loadEmbeddedFonts } from '../../fonts/font-table-loader.js';
 import { KNOWN_RELATIONSHIPS } from '../../opc/relationships.js';
 import { parsePackageMetadata } from '../metadata/metadata-parser.js';
 import { defaultXmlAdapter, type XmlNode } from '../xml-adapter.js';
@@ -520,7 +521,15 @@ export function parsePackage(pkg: OpcPackage): DocumentNode {
 }
 
 /** Convenience top-level function to open and parse a .docx Uint8Array buffer into DocumentNode */
-export async function openDocument(data: Uint8Array): Promise<DocumentNode> {
+export async function openDocument(
+  data: Uint8Array,
+  options?: { loadEmbeddedFonts?: boolean },
+): Promise<DocumentNode> {
   const pkg = await openPackage(data);
+  if (options?.loadEmbeddedFonts !== false) {
+    // Register embedded fonts for exact text measurement (futures §5.2).
+    // Failures are non-fatal by design — measurement falls back gracefully.
+    loadEmbeddedFonts(pkg);
+  }
   return defaultDocumentParser.parsePackage(pkg);
 }

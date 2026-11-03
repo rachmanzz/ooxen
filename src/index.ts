@@ -32,6 +32,9 @@ export * from './parser/wml/footnote-parser.js';
 export * from './parser/wml/comment-parser.js';
 
 // Layout
+export * from './fonts/ttf-parser.js';
+export * from './fonts/font-metrics-registry.js';
+export * from './fonts/font-table-loader.js';
 export * from './layout/page-engine.js';
 export * from './layout/line-breaker.js';
 export * from './layout/text-metrics.js';
