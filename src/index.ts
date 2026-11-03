@@ -2,7 +2,7 @@
  * Ooxen - Universal bidirectional read-write-render engine for Office Open XML (ISO/IEC 29500)
  */
 
-export const VERSION = '0.1.2';
+export const VERSION = '0.2.0';
 
 // AST and Types
 export * from './types/ast.js';

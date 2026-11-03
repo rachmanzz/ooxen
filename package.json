@@ -3,7 +3,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Universal bidirectional read-write-render engine for Office Open XML (OOXML)",
   "type": "module",
   "main": "./dist/index.js",
@@ -11,7 +11,8 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
     }
   },
   "files": [
@@ -34,9 +35,6 @@
   ],
   "author": "Muhammad Abdurrahman",
   "license": "Apache-2.0",
-  "publishConfig": {
-    "access": "public"
-  },
   "dependencies": {
     "fflate": "^0.8.3"
   },
