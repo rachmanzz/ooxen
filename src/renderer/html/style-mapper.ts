@@ -31,9 +31,9 @@ export class StandardStyleMapper implements StyleMapper {
     if (style.backgroundColor) css['background-color'] = style.backgroundColor;
     if (style.verticalAlign) {
       css['vertical-align'] = style.verticalAlign;
-      if (style.verticalAlign === 'superscript') {
-        css['font-size'] = '0.75em';
-      } else if (style.verticalAlign === 'subscript') {
+      // Only downscale when the run has no explicit font size — an authored
+      // size must win over the vertical-align default (v1 F9).
+      if (!style.fontSizePt) {
         css['font-size'] = '0.75em';
       }
     }

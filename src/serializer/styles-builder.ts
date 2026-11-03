@@ -20,7 +20,7 @@ export class StandardStylesBuilder implements StylesBuilder {
     </w:rPrDefault>
     <w:pPrDefault>
       <w:pPr>
-        <w:spacing w:after="160" w:line="240"/>
+        <w:spacing w:after="160" w:line="240" w:lineRule="atLeast"/>
         <w:jc w:val="left"/>
       </w:pPr>
     </w:pPrDefault>

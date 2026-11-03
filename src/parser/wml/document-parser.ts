@@ -190,6 +190,16 @@ export function parseSectionProperties(node?: XmlNode): SectionProperties {
   return props;
 }
 
+/**
+ * Resolves a relationship target to a part path under word/. Targets may be
+ * stored already rooted ("word/styles.xml") — joining unconditionally would
+ * produce "word/word/..." and miss the part (v2 N10).
+ */
+function resolveWordPartPath(target: string | undefined, fallback: string): string {
+  if (!target) return fallback;
+  return target.startsWith('word/') ? target : `word/${target.replace(/^\/+/, '')}`;
+}
+
 export class StandardDocumentParser implements DocumentParser {
   private paragraphParser: ParagraphParser;
   private tableParser: TableParser;
@@ -352,7 +362,7 @@ export class StandardDocumentParser implements DocumentParser {
     let styleResolver: StyleResolver | undefined;
     const docRels = pkg.getRelationships(docPartPath);
     const stylesRel = docRels.find((r) => r.type === KNOWN_RELATIONSHIPS.STYLES);
-    const stylesPartPath = stylesRel ? `word/${stylesRel.target.replace(/^\/+/, '')}` : 'word/styles.xml';
+    const stylesPartPath = resolveWordPartPath(stylesRel?.target, 'word/styles.xml');
     const stylesPart = pkg.getPart(stylesPartPath);
     if (stylesPart) {
       const stylesXml = defaultXmlAdapter.parse(textDecoder.decode(stylesPart.data));
@@ -364,7 +374,7 @@ export class StandardDocumentParser implements DocumentParser {
     // 3. Resolve numbering
     let numberingResolver: NumberingResolver | undefined;
     const numRel = docRels.find((r) => r.type === KNOWN_RELATIONSHIPS.NUMBERING);
-    const numPartPath = numRel ? `word/${numRel.target.replace(/^\/+/, '')}` : 'word/numbering.xml';
+    const numPartPath = resolveWordPartPath(numRel?.target, 'word/numbering.xml');
     const numPart = pkg.getPart(numPartPath);
     if (numPart) {
       const numXml = defaultXmlAdapter.parse(textDecoder.decode(numPart.data));
@@ -433,7 +443,7 @@ export class StandardDocumentParser implements DocumentParser {
     // 7. Resolve footnotes & endnotes
     let footnotes: FootnoteNode[] | undefined;
     const fnRel = docRels.find((r) => r.type === KNOWN_RELATIONSHIPS.FOOTNOTES);
-    const fnPath = fnRel ? `word/${fnRel.target.replace(/^\/+/, '')}` : 'word/footnotes.xml';
+    const fnPath = resolveWordPartPath(fnRel?.target, 'word/footnotes.xml');
     const fnPart = pkg.getPart(fnPath);
     if (fnPart) {
       footnotes = parseFootnotesXml(
@@ -447,7 +457,7 @@ export class StandardDocumentParser implements DocumentParser {
 
     let endnotes: FootnoteNode[] | undefined;
     const enRel = docRels.find((r) => r.type === KNOWN_RELATIONSHIPS.ENDNOTES);
-    const enPath = enRel ? `word/${enRel.target.replace(/^\/+/, '')}` : 'word/endnotes.xml';
+    const enPath = resolveWordPartPath(enRel?.target, 'word/endnotes.xml');
     const enPart = pkg.getPart(enPath);
     if (enPart) {
       endnotes = parseEndnotesXml(
@@ -462,7 +472,7 @@ export class StandardDocumentParser implements DocumentParser {
     // 8. Resolve comments
     let comments: CommentNode[] | undefined;
     const comRel = docRels.find((r) => r.type === KNOWN_RELATIONSHIPS.COMMENTS);
-    const comPath = comRel ? `word/${comRel.target.replace(/^\/+/, '')}` : 'word/comments.xml';
+    const comPath = resolveWordPartPath(comRel?.target, 'word/comments.xml');
     const comPart = pkg.getPart(comPath);
     if (comPart) {
       comments = parseCommentsXml(

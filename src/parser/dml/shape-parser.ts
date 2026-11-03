@@ -20,6 +20,24 @@ function parseHexColor(clrNode?: XmlNode): string | undefined {
 }
 
 /**
+ * Reads width/height (in points) from a legacy VML `style` attribute, e.g.
+ * `style="width:180pt;height:90pt"`. Falls back to 100×100 pt when the
+ * attribute is absent — declared sizes must win over the fixed default (v1 F8).
+ */
+export function parseVmlSize(styleAttr?: string): { widthPt: number; heightPt: number } {
+  const style = styleAttr ?? '';
+  const widthMatch = style.match(/(?:^|;)\s*width\s*:\s*([\d.]+)\s*(pt|px)?/i);
+  const heightMatch = style.match(/(?:^|;)\s*height\s*:\s*([\d.]+)\s*(pt|px)?/i);
+  const toPt = (match: RegExpMatchArray | null): number => {
+    if (!match) return 100;
+    const num = Number.parseFloat(match[1]!);
+    if (Number.isNaN(num)) return 100;
+    return match[2]?.toLowerCase() === 'px' ? num * 0.75 : num;
+  };
+  return { widthPt: toPt(widthMatch), heightPt: toPt(heightMatch) };
+}
+
+/**
  * Generates vector path commands for standard preset DrawingML shapes.
  */
 export function generatePresetGeometry(preset: string, widthPt: number, heightPt: number): VectorPathCommand[] {
@@ -413,8 +431,7 @@ export function parseDrawingNode(node: XmlNode): DrawingShapeNode | undefined {
     const strokecolor = shape.attributes['strokecolor'];
     const strokeweight = shape.attributes['strokeweight'];
 
-    const widthPt = 100;
-    const heightPt = 100;
+    const { widthPt, heightPt } = parseVmlSize(shape.attributes['style']);
 
     const commands = pathStr ? parseVmlPath(pathStr, widthPt, heightPt) : generatePresetGeometry('rect', widthPt, heightPt);
 

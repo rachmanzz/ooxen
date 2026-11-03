@@ -68,17 +68,24 @@ export function serializeContentTypes(manifest: ContentTypesManifest): string {
     `<Types xmlns="${CONTENT_TYPES_NAMESPACE}">`,
   ];
 
+  // Attribute values must be XML-escaped: unescaped &, <, ", or > in an
+  // extension, part name, or content type produces malformed XML and a
+  // corrupt package (v1 F19).
   for (const d of manifest.defaults) {
-    lines.push(`  <Default Extension="${d.extension}" ContentType="${d.contentType}"/>`);
+    lines.push(`  <Default Extension="${escapeXmlAttribute(d.extension)}" ContentType="${escapeXmlAttribute(d.contentType)}"/>`);
   }
 
   for (const o of manifest.overrides) {
     const part = o.partName.startsWith('/') ? o.partName : '/' + o.partName;
-    lines.push(`  <Override PartName="${part}" ContentType="${o.contentType}"/>`);
+    lines.push(`  <Override PartName="${escapeXmlAttribute(part)}" ContentType="${escapeXmlAttribute(o.contentType)}"/>`);
   }
 
   lines.push('</Types>');
   return lines.join('\n');
+}
+
+function escapeXmlAttribute(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 export function createDefaultContentTypesManifest(): ContentTypesManifest {

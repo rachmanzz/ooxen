@@ -143,6 +143,8 @@ describe('Vector Shape Canvas Renderer', () => {
 
     const page: PageLayout = {
       pageIndex: 0,
+      pageNumber: 1,
+      orientation: 'portrait',
       size: { width: 595.28, height: 841.89 },
       margins: { top: 72, right: 72, bottom: 72, left: 72 },
       lines: [
@@ -179,6 +181,8 @@ describe('Vector Shape Canvas Renderer', () => {
 
     const page: PageLayout = {
       pageIndex: 0,
+      pageNumber: 1,
+      orientation: 'portrait',
       size: { width: 595.28, height: 841.89 },
       margins: { top: 72, right: 72, bottom: 72, left: 72 },
       lines: [

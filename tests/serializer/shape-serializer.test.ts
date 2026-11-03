@@ -4,7 +4,6 @@ import { StandardHtmlRenderer } from '../../src/renderer/html/html-renderer.js';
 import { StandardWmlBuilder } from '../../src/serializer/wml-builder.js';
 import { StandardOoxenWriter } from '../../src/serializer/ooxen-writer.js';
 import { openPackage } from '../../src/opc/package.js';
-import { defaultXmlAdapter } from '../../src/parser/xml-adapter.js';
 import { StandardDocumentParser } from '../../src/parser/wml/document-parser.js';
 
 describe('Vector Shape Serialization & HTML-Canvas Round-Trip', () => {

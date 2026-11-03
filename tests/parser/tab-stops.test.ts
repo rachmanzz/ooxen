@@ -8,10 +8,12 @@ describe('Tab Stops Parser (ISO/IEC 29500-1 §17.3.1.38 & §17.3.2.37)', () => {
     const pPrXml: XmlNode = {
       nodeName: 'w:pPr',
       attributes: {},
+      textContent: '',
       children: [
         {
           nodeName: 'w:tabs',
           attributes: {},
+          textContent: '',
           children: [
             {
               nodeName: 'w:tab',
@@ -20,6 +22,7 @@ describe('Tab Stops Parser (ISO/IEC 29500-1 §17.3.1.38 & §17.3.2.37)', () => {
                 'w:pos': '1440', // 72 pt
               },
               children: [],
+              textContent: '',
             },
             {
               nodeName: 'w:tab',
@@ -29,6 +32,7 @@ describe('Tab Stops Parser (ISO/IEC 29500-1 §17.3.1.38 & §17.3.2.37)', () => {
                 'w:leader': 'dot',
               },
               children: [],
+              textContent: '',
             },
             {
               nodeName: 'w:tab',
@@ -38,6 +42,7 @@ describe('Tab Stops Parser (ISO/IEC 29500-1 §17.3.1.38 & §17.3.2.37)', () => {
                 'w:leader': 'hyphen',
               },
               children: [],
+              textContent: '',
             },
           ],
         },
@@ -67,10 +72,12 @@ describe('Tab Stops Parser (ISO/IEC 29500-1 §17.3.1.38 & §17.3.2.37)', () => {
     const pXml: XmlNode = {
       nodeName: 'w:p',
       attributes: {},
+      textContent: '',
       children: [
         {
           nodeName: 'w:r',
           attributes: {},
+          textContent: '',
           children: [
             {
               nodeName: 'w:t',
@@ -82,6 +89,7 @@ describe('Tab Stops Parser (ISO/IEC 29500-1 §17.3.1.38 & §17.3.2.37)', () => {
               nodeName: 'w:tab',
               attributes: {},
               children: [],
+              textContent: '',
             },
             {
               nodeName: 'w:t',

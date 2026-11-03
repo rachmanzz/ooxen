@@ -58,10 +58,9 @@ describe('Compliance: Runtime-Agnostic & Zero Platform Leak', () => {
         const importSpecifier = match[1]!;
 
         for (const forbidden of FORBIDDEN_MODULES) {
-          expect(importSpecifier).not.toBe(
-            forbidden,
-            `Forbidden Node.js import '${forbidden}' detected in production file: ${filePath}`,
-          );
+          if (importSpecifier === forbidden) {
+            throw new Error(`Forbidden Node.js import '${forbidden}' detected in production file: ${filePath}`);
+          }
         }
       }
     }

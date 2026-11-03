@@ -21,6 +21,18 @@ export interface HyperlinkResolver {
   resolveHyperlink(relationshipId: string): string | undefined;
 }
 
+/**
+ * Classifies a field instruction into a canonical field type. The word
+ * boundary is required so that `PAGEREF _Toc1` is not misclassified as a
+ * `PAGE` field (v2 N3); unknown instructions are kept verbatim.
+ */
+function classifyFieldInstruction(instr: string): string {
+  const upper = instr.toUpperCase();
+  if (/^PAGE(\s|$)/.test(upper)) return 'PAGE';
+  if (/^NUMPAGES(\s|$)/.test(upper)) return 'NUMPAGES';
+  return instr;
+}
+
 export class MapHyperlinkResolver implements HyperlinkResolver {
   private links = new Map<string, string>();
 
@@ -132,11 +144,7 @@ export class StandardParagraphParser implements ParagraphParser {
             }
           } else if (hTag === 'fldsimple') {
             const instr = (hChild.attributes['w:instr'] ?? hChild.attributes['instr'] ?? '').trim();
-            const fieldType = instr.toUpperCase().startsWith('PAGE')
-              ? 'PAGE'
-              : instr.toUpperCase().startsWith('NUMPAGES')
-                ? 'NUMPAGES'
-                : instr;
+            const fieldType = classifyFieldInstruction(instr);
             for (const fChild of hChild.children) {
               if (fChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase() === 'r') {
                 const r = this.parseRun(fChild, styleResolver, imageResolver);
@@ -162,11 +170,7 @@ export class StandardParagraphParser implements ParagraphParser {
         }
       } else if (tag === 'fldsimple') {
         const instr = (child.attributes['w:instr'] ?? child.attributes['instr'] ?? '').trim();
-        const fieldType = instr.toUpperCase().startsWith('PAGE')
-          ? 'PAGE'
-          : instr.toUpperCase().startsWith('NUMPAGES')
-            ? 'NUMPAGES'
-            : instr;
+        const fieldType = classifyFieldInstruction(instr);
         for (const fChild of child.children) {
           if (fChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase() === 'r') {
             const r = this.parseRun(fChild, styleResolver, imageResolver);
@@ -257,14 +261,7 @@ export class StandardParagraphParser implements ParagraphParser {
       } else if (tag === 't' || tag === 'deltext') {
         text += child.textContent;
       } else if (tag === 'instrtext') {
-        const instr = child.textContent.trim().toUpperCase();
-        if (instr.startsWith('PAGE')) {
-          field = 'PAGE';
-        } else if (instr.startsWith('NUMPAGES')) {
-          field = 'NUMPAGES';
-        } else {
-          field = instr;
-        }
+        field = classifyFieldInstruction(child.textContent.trim().toUpperCase());
       } else if (tag === 'br') {
         const brType = (child.attributes['w:type'] ?? child.attributes['type'] ?? '').toLowerCase();
         if (brType === 'page' || brType === 'column') {

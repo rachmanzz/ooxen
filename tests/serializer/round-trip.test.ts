@@ -149,7 +149,7 @@ describe('Bidirectional Round-Trip Integration', () => {
     const rootNode = defaultXmlAdapter.parse(docXmlStr);
     const recoveredDoc = documentParser.parseDocument(rootNode);
 
-    const p = recoveredDoc.sections[0]?.children[0];
+    const p = recoveredDoc.sections[0]?.children[0] as ParagraphNode | undefined;
     expect(p?.type).toBe('paragraph');
     expect(p?.style?.alignment).toBe('right');
 

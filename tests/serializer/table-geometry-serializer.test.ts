@@ -88,7 +88,7 @@ describe('Table Geometry Serializer & Round-trip', () => {
     // Verify w:tcPr
     expect(wml).toContain('<w:tcW w:w="2000" w:type="dxa"/>');
     expect(wml).toContain('<w:vAlign w:val="center"/>');
-    expect(wml).toContain('<w:shd w:fill="EEEEEE"/>');
+    expect(wml).toContain('<w:shd w:val="clear" w:color="auto" w:fill="EEEEEE"/>');
     expect(wml).toContain('<w:vAlign w:val="bottom"/>');
   });
 

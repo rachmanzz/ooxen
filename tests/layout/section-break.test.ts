@@ -145,6 +145,8 @@ describe('ISO/IEC 29500 Section Break Layout Engine', () => {
           },
           headers: {
             default: {
+              type: 'header',
+              kind: 'default',
               children: [
                 {
                   type: 'paragraph',

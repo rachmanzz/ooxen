@@ -3,13 +3,11 @@ import { openPackage } from '../../src/opc/package.js';
 import { KNOWN_RELATIONSHIPS } from '../../src/opc/relationships.js';
 import { StandardDocumentParser } from '../../src/parser/wml/document-parser.js';
 import { MapHeaderFooterResolver, parseHeaderFooterXml } from '../../src/parser/wml/header-footer-parser.js';
-import { exportOoxml, exportOoxmlFromHtml, StandardOoxenWriter } from '../../src/serializer/ooxen-writer.js';
-import { StandardWmlBuilder } from '../../src/serializer/wml-builder.js';
+import { exportOoxmlFromHtml, StandardOoxenWriter } from '../../src/serializer/ooxen-writer.js';
 import type { DocumentNode } from '../../src/types/ast.js';
 
 describe('Header & Footer Serializer & Bidirectional Round-Trip', () => {
   const decoder = new TextDecoder();
-  const wmlBuilder = new StandardWmlBuilder();
 
   it('should serialize header and footer parts and reference them in document.xml', async () => {
     const doc: DocumentNode = {

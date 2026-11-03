@@ -3,7 +3,7 @@ import { openPackage } from '../../src/opc/package.js';
 import { KNOWN_RELATIONSHIPS } from '../../src/opc/relationships.js';
 import { StandardDocumentParser } from '../../src/parser/wml/document-parser.js';
 import { MapHyperlinkResolver } from '../../src/parser/wml/paragraph-parser.js';
-import { exportOoxml, exportOoxmlFromHtml, StandardOoxenWriter } from '../../src/serializer/ooxen-writer.js';
+import { exportOoxmlFromHtml, StandardOoxenWriter } from '../../src/serializer/ooxen-writer.js';
 import type { DocumentNode } from '../../src/types/ast.js';
 
 describe('Hyperlink & Bookmark Serializer & Round-Trip', () => {

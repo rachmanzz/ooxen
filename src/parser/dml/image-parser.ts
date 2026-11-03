@@ -1,5 +1,6 @@
 import type { ImageNode } from '../../types/ast.js';
 import { emuToPt, uint8ArrayToBase64 } from '../../types/common.js';
+import { parseVmlSize } from './shape-parser.js';
 import type { XmlNode } from '../xml-adapter.js';
 
 /**
@@ -120,8 +121,7 @@ export function parseImageNode(node: XmlNode, imageResolver?: ImageResolver): Im
     if (!relId) return undefined;
 
     const altText = imagedata.attributes['o:title'] ?? shape?.attributes['alt'];
-    const widthPt = 100;
-    const heightPt = 100;
+    const { widthPt, heightPt } = parseVmlSize(shape?.attributes['style']);
 
     let data: Uint8Array | undefined;
     let src: string | undefined;

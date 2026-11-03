@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { StandardPageRenderer } from '../../src/renderer/canvas/page-renderer.js';
 import { StandardHtmlRenderer } from '../../src/renderer/html/html-renderer.js';
 import type { CanvasTarget } from '../../src/renderer/canvas/canvas-target.js';
-import type { LayoutPage } from '../../src/layout/page-engine.js';
+import type { PageLayout } from '../../src/layout/page-engine.js';
 import type { DocumentNode } from '../../src/types/ast.js';
 
 describe('Tab Stops & Leader Renderer', () => {
@@ -11,6 +11,8 @@ describe('Tab Stops & Leader Renderer', () => {
     const mockTarget: CanvasTarget = {
       save: () => ops.push('save'),
       restore: () => ops.push('restore'),
+      translate: () => {},
+      scale: () => {},
       fillText: (text: string, x: number, y: number) => ops.push(`fillText(${text}, ${x}, ${y})`),
       fillRect: (x: number, y: number, w: number, h: number) => ops.push(`fillRect(${x}, ${y}, ${w}, ${h})`),
       strokeRect: () => {},
@@ -20,12 +22,17 @@ describe('Tab Stops & Leader Renderer', () => {
       lineTo: () => {},
       stroke: () => {},
       fill: () => {},
+      font: '',
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 1,
     };
 
     const renderer = new StandardPageRenderer();
-    const page: LayoutPage = {
+    const page: PageLayout = {
       pageIndex: 0,
       pageNumber: 1,
+      orientation: 'portrait',
       size: { width: 612, height: 792 },
       margins: { top: 72, right: 72, bottom: 72, left: 72 },
       lines: [
@@ -61,6 +68,7 @@ describe('Tab Stops & Leader Renderer', () => {
   it('renders semantic <span class="ooxen-tab"> in HTML output', () => {
     const renderer = new StandardHtmlRenderer();
     const doc: DocumentNode = {
+      type: 'document',
       sections: [
         {
           type: 'section',

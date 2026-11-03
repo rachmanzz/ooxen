@@ -35,11 +35,15 @@ describe('StandardPageRenderer Decoupled & Callback Options (e.g. book-canvas)',
         },
         headers: {
           default: {
+            type: 'header',
+            kind: 'default',
             children: [{ type: 'paragraph', children: [{ type: 'run', text: 'Top Header Text' }] }],
           },
         },
         footers: {
           default: {
+            type: 'footer',
+            kind: 'default',
             children: [{ type: 'paragraph', children: [{ type: 'run', text: 'Bottom Footer Text' }] }],
           },
         },

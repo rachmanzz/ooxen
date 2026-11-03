@@ -75,11 +75,19 @@ export function serializeRelationships(rels: OpcRelationship[]): string {
     `<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">`,
   ];
 
+  // Attribute values must be XML-escaped: unescaped &, <, ", or > in an id,
+  // type, or target produces malformed XML and a corrupt package (v1 F19).
   for (const r of rels) {
-    const targetModeAttr = r.targetMode ? ` TargetMode="${r.targetMode}"` : '';
-    lines.push(`  <Relationship Id="${r.id}" Type="${r.type}" Target="${r.target}"${targetModeAttr}/>`);
+    const targetModeAttr = r.targetMode ? ` TargetMode="${escapeXmlAttribute(r.targetMode)}"` : '';
+    lines.push(
+      `  <Relationship Id="${escapeXmlAttribute(r.id)}" Type="${escapeXmlAttribute(r.type)}" Target="${escapeXmlAttribute(r.target)}"${targetModeAttr}/>`
+    );
   }
 
   lines.push('</Relationships>');
   return lines.join('\n');
+}
+
+function escapeXmlAttribute(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

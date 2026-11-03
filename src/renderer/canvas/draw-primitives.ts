@@ -2,6 +2,7 @@ import type { DrawingShapeNode, ImageNode } from '../../types/ast.js';
 import type { Rect } from '../../types/common.js';
 import type { TabLeader, TextStyle } from '../../types/style.js';
 import type { BorderStyle, CellBox } from '../../layout/page-engine.js';
+import { measureTextWidth } from '../../layout/text-metrics.js';
 import type { CanvasTarget } from './canvas-target.js';
 
 /**
@@ -27,31 +28,42 @@ export class StandardDrawPrimitives implements DrawPrimitives {
     const isBold = Boolean(style?.bold);
     const isItalic = Boolean(style?.italic);
     const color = style?.color ?? '#000000';
+    // Super/subscript runs are drawn smaller and shifted off the shared
+    // baseline instead of being rendered as normal text (v2 N14).
+    const isSuperscript = style?.verticalAlign === 'superscript';
+    const isSubscript = style?.verticalAlign === 'subscript';
+    const scriptFactor = isSuperscript || isSubscript ? 0.75 : 1;
+    const baselineShift = isSuperscript ? -fontSize * 0.33 : isSubscript ? fontSize * 0.15 : 0;
+    const drawFontSize = fontSize * scriptFactor;
 
     // 1. Draw background highlight if present
     if (style?.backgroundColor) {
       target.save();
       target.fillStyle = style.backgroundColor;
-      target.fillRect(x, y, target.font ? fontSize * text.length * 0.55 : 20, fontSize * 1.2);
+      // Measured text width (shared heuristics) instead of the old
+      // length-based guess — and always measured, never the magic 20pt
+      // fallback for font-less targets (v1 F7).
+      target.fillRect(x, y, measureTextWidth(text, drawFontSize, isBold, fontFamily), fontSize * 1.2);
       target.restore();
     }
 
     // 2. Setup font and color
     target.save();
-    target.font = `${isItalic ? 'italic ' : ''}${isBold ? 'bold ' : ''}${fontSize}pt ${fontFamily}`;
+    target.font = `${isItalic ? 'italic ' : ''}${isBold ? 'bold ' : ''}${drawFontSize}pt ${fontFamily}`;
     target.fillStyle = color;
 
-    // 3. Draw text at baseline
-    target.fillText(text, x, y + baseline);
+    // 3. Draw text at baseline (shifted for super/subscript)
+    const drawBaseline = y + baseline + baselineShift;
+    target.fillText(text, x, drawBaseline);
 
-    // 4. Draw underline if present
+    // 4. Draw underline if present (follows the shifted baseline)
     if (style?.underline) {
-      target.fillRect(x, y + baseline + 2, fontSize * text.length * 0.55, 1);
+      target.fillRect(x, drawBaseline + 2, measureTextWidth(text, drawFontSize, isBold, fontFamily), 1);
     }
 
     // 5. Draw strikethrough if present
     if (style?.strike) {
-      target.fillRect(x, y + baseline - fontSize * 0.3, fontSize * text.length * 0.55, 1);
+      target.fillRect(x, drawBaseline - drawFontSize * 0.3, measureTextWidth(text, drawFontSize, isBold, fontFamily), 1);
     }
 
     target.restore();

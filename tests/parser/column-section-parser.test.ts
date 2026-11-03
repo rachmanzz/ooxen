@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'bun:test';
-import { defaultXmlAdapter } from '../../src/parser/xml-adapter.js';
 import { StandardDocumentParser } from '../../src/parser/wml/document-parser.js';
 
 describe('Multi-Column Section (w:cols) Parser', () => {

@@ -71,6 +71,9 @@ class MockCanvasTarget implements CanvasTarget {
   drawImage(image: any, x: number, y: number, w: number, h: number): void {
     this.calls.push({ method: 'drawImage', args: [image, x, y, w, h] });
   }
+
+  translate(): void {}
+  scale(): void {}
 }
 
 describe('Header & Footer Renderer & Page Engine', () => {

@@ -42,9 +42,15 @@ function parseAttributes(attrString: string): Record<string, string> {
 
 export class SimpleXmlAdapter implements XmlAdapter {
   parse(xmlString: string): XmlNode {
-    // Strip XML declarations, DOCTYPE DTD declarations, and comments
+    // Strip XML declarations, DOCTYPE DTD declarations, and comments.
+    // CDATA sections are inlined as escaped text *before* comment stripping
+    // so their content survives verbatim and cannot be eaten by the comment
+    // regex (v2 N13).
     let cleaned = xmlString
       .replace(/<\?xml[\s\S]*?\?>/g, '')
+      .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, (_match, cdata: string) =>
+        cdata.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      )
       .replace(/<!--[\s\S]*?-->/g, '')
       .replace(/<!DOCTYPE[\s\S]*?>/gi, '')
       .trim();
@@ -57,7 +63,10 @@ export class SimpleXmlAdapter implements XmlAdapter {
     };
 
     const stack: XmlNode[] = [root];
-    const tagRegex = /<(\/)?([a-zA-Z0-9_:-]+)([^>]*?)(\/)?>|([^<]+)/g;
+    // The attribute section must tolerate '>' inside quoted values (legal in
+    // well-formed XML): match either a complete quoted string or any
+    // non-quote, non-'>' character (v2 N13).
+    const tagRegex = /<(\/)?([a-zA-Z0-9_:-]+)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/)?>|([^<]+)/g;
     let match: RegExpExecArray | null;
 
     while ((match = tagRegex.exec(cleaned)) !== null) {

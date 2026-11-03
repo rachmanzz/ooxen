@@ -52,11 +52,20 @@ export class StandardOoxenWriter implements OoxenWriter {
   }
 
   async write(document: DocumentNode): Promise<Uint8Array> {
+    // Deep-clone so exporting never mutates the caller's AST (v2 N11):
+    // relationship ids assigned below live on the private copy only.
+    const doc: DocumentNode = structuredClone(document);
     const mediaParts: ImageMediaPart[] = [];
     let imgCounter = 1;
+    let mediaCounter = 1;
 
     const processImage = (img: ImageNode): void => {
-      const relId = img.relationshipId || `rIdImg${imgCounter++}`;
+      // Always allocate a fresh relationship id and a unique part name
+      // (v2 N1/N2). Preset ids from a parsed package ("rId2", "rId5", ...)
+      // must not be reused: they can collide with the builder's own
+      // relationship ids, and reusing one id would collapse distinct images
+      // into a single overwritten media part.
+      const relId = `rIdImg${imgCounter++}`;
       img.relationshipId = relId;
 
       let rawData: Uint8Array | undefined = img.data;
@@ -72,7 +81,7 @@ export class StandardOoxenWriter implements OoxenWriter {
 
       if (rawData) {
         const ext = mimeType.replace(/^image\//, '').replace(/\+xml$/, '') || 'png';
-        const partName = `word/media/image${imgCounter}.${ext}`;
+        const partName = `word/media/image${mediaCounter++}.${ext}`;
         mediaParts.push({
           partName,
           relationshipId: relId,
@@ -123,7 +132,7 @@ export class StandardOoxenWriter implements OoxenWriter {
     let hdrCounter = 1;
     let ftrCounter = 1;
 
-    for (const section of document.sections) {
+    for (const section of doc.sections) {
       for (const block of section.children) {
         traverseBlock(block);
       }
@@ -169,7 +178,7 @@ export class StandardOoxenWriter implements OoxenWriter {
       }
     }
 
-    const documentXml = this.wmlBuilder.buildDocumentXml(document, headerFooterRelIds, hyperlinkRelIds);
+    const documentXml = this.wmlBuilder.buildDocumentXml(doc, headerFooterRelIds, hyperlinkRelIds);
     const pkg = this.packageBuilder.assemblePackage(
       documentXml,
       undefined,
@@ -177,12 +186,12 @@ export class StandardOoxenWriter implements OoxenWriter {
       mediaParts,
       headerFooterParts,
       externalRelationships,
-      document.metadata,
-      document.footnotes,
-      document.endnotes,
+      doc.metadata,
+      doc.footnotes,
+      doc.endnotes,
       undefined,
       undefined,
-      document.comments,
+      doc.comments,
     );
     return pkg.serialize();
   }
@@ -582,6 +591,8 @@ export class StandardOoxenWriter implements OoxenWriter {
       const tag = child.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
       if (tag === 'span') {
         runs.push(this.parseSpanToRun(child));
+      } else if (tag === 'b' || tag === 'strong' || tag === 'i' || tag === 'em') {
+        runs.push(...this.parseEmphasisToRuns(child, tag === 'b' || tag === 'strong' ? { bold: true } : { italic: true }));
       } else if (tag === 'mark') {
         const commentId = child.attributes['data-comment-id'];
         for (const mChild of child.children) {
@@ -590,6 +601,11 @@ export class StandardOoxenWriter implements OoxenWriter {
             const r = this.parseSpanToRun(mChild);
             r.commentId = commentId;
             runs.push(r);
+          } else if (mTag === 'b' || mTag === 'strong' || mTag === 'i' || mTag === 'em') {
+            for (const r of this.parseEmphasisToRuns(mChild, mTag === 'b' || mTag === 'strong' ? { bold: true } : { italic: true })) {
+              r.commentId = commentId;
+              runs.push(r);
+            }
           }
         }
         if (child.children.length === 0 && child.textContent) {
@@ -617,6 +633,11 @@ export class StandardOoxenWriter implements OoxenWriter {
             const r = this.parseSpanToRun(iChild);
             r.revision = revInfo;
             runs.push(r);
+          } else if (iTag === 'b' || iTag === 'strong' || iTag === 'i' || iTag === 'em') {
+            for (const r of this.parseEmphasisToRuns(iChild, iTag === 'b' || iTag === 'strong' ? { bold: true } : { italic: true })) {
+              r.revision = revInfo;
+              runs.push(r);
+            }
           }
         }
         if (child.children.length === 0 && child.textContent) {
@@ -734,8 +755,19 @@ export class StandardOoxenWriter implements OoxenWriter {
       }
     }
 
-    if (runs.length === 0 && pNode.textContent) {
-      runs.push({ type: 'run', text: pNode.textContent });
+    // SimpleXmlAdapter folds an element's direct text nodes into the parent's
+    // textContent, so bare text interleaved with inline elements would be
+    // silently lost (v2 N7). The relative ordering between that text and the
+    // child elements is not recoverable at this layer; emitting it first
+    // preserves the content for the common leading-text case.
+    const bareText = pNode.children.length > 0 && pNode.textContent.trim() ? pNode.textContent : '';
+
+    if (runs.length === 0) {
+      if (pNode.textContent) {
+        runs.push({ type: 'run', text: pNode.textContent });
+      }
+    } else if (bareText) {
+      runs.unshift({ type: 'run', text: bareText });
     }
 
     return {
@@ -744,6 +776,44 @@ export class StandardOoxenWriter implements OoxenWriter {
       bookmarkName,
       children: runs,
     };
+  }
+
+  /**
+   * Parses an inline emphasis element (b/strong/i/em), merging the emphasis
+   * into every nested run. Nested emphasis composes (e.g. b > i > span) and
+   * bare text children are preserved (v2 N7).
+   */
+  private parseEmphasisToRuns(
+    node: XmlNode,
+    emphasis: { bold?: boolean; italic?: boolean },
+    hyperlink?: HyperlinkInfo,
+    bookmarkName?: string,
+  ): RunNode[] {
+    const mergeStyle = (run: RunNode): RunNode => {
+      const merged: TextStyle = { ...emphasis, ...run.style };
+      return { ...run, style: Object.keys(merged).length > 0 ? merged : undefined };
+    };
+
+    if (node.children.length === 0) {
+      return node.textContent ? [mergeStyle({ type: 'run', text: node.textContent })] : [];
+    }
+
+    const runs: RunNode[] = [];
+    for (const child of node.children) {
+      const tag = child.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+      if (tag === 'span') {
+        runs.push(mergeStyle(this.parseSpanToRun(child, hyperlink, bookmarkName)));
+      } else if (tag === 'b' || tag === 'strong') {
+        runs.push(...this.parseEmphasisToRuns(child, { ...emphasis, bold: true }, hyperlink, bookmarkName));
+      } else if (tag === 'i' || tag === 'em') {
+        runs.push(...this.parseEmphasisToRuns(child, { ...emphasis, italic: true }, hyperlink, bookmarkName));
+      } else if (tag === 'br') {
+        runs.push({ type: 'run', text: '\n' });
+      } else if (child.textContent) {
+        runs.push(mergeStyle({ type: 'run', text: child.textContent }));
+      }
+    }
+    return runs;
   }
 
   private parseSpanToRun(spanNode: XmlNode, hyperlink?: HyperlinkInfo, bookmarkName?: string): RunNode {
@@ -756,6 +826,17 @@ export class StandardOoxenWriter implements OoxenWriter {
     if (spanCss['text-decoration']?.includes('line-through')) rStyle.strike = true;
     if (spanCss['color']) rStyle.color = spanCss['color'];
     if (spanCss['font-family']) rStyle.fontFamily = spanCss['font-family'];
+    // The HTML renderer emits font-size (in pt) and background-color; parse
+    // them back so the HTML -> AST path is not lossy for these two (v2 N7).
+    const fontSizeRaw = spanCss['font-size'];
+    if (fontSizeRaw) {
+      const num = Number.parseFloat(fontSizeRaw);
+      if (!Number.isNaN(num)) {
+        if (fontSizeRaw.trim().endsWith('pt')) rStyle.fontSizePt = num;
+        else if (fontSizeRaw.trim().endsWith('px')) rStyle.fontSizePt = num * 0.75;
+      }
+    }
+    if (spanCss['background-color']) rStyle.backgroundColor = spanCss['background-color'];
 
     let drawing: DrawingShapeNode | undefined;
     let image: ImageNode | undefined;

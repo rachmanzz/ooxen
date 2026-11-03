@@ -5,6 +5,8 @@ import type { PageLayout } from '../../src/layout/page-engine.js';
 describe('Hit Testing Pure Function', () => {
   const samplePage: PageLayout = {
     pageIndex: 0,
+      pageNumber: 1,
+      orientation: 'portrait',
     size: { width: 612, height: 792 },
     margins: { top: 72, right: 72, bottom: 72, left: 72 },
     lines: [

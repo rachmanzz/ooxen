@@ -65,6 +65,8 @@ describe('Canvas Page Renderer', () => {
   it('should render page paper and text fragments to canvas target', () => {
     const page: PageLayout = {
       pageIndex: 0,
+      pageNumber: 1,
+      orientation: 'portrait',
       size: { width: 612, height: 792 },
       margins: { top: 72, right: 72, bottom: 72, left: 72 },
       lines: [

@@ -52,6 +52,12 @@ class MockCanvasTarget implements CanvasTarget {
   restore(): void {
     this.calls.push({ method: 'restore', args: [] });
   }
+  translate(): void {}
+  scale(): void {}
+  font = '';
+  fillStyle = '';
+  strokeStyle = '';
+  lineWidth = 1;
 }
 
 describe('Footnote Layout, Canvas & HTML Renderer', () => {

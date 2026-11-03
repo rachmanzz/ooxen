@@ -4,6 +4,7 @@ import type { TableCellStyle, TableStyle } from '../../types/style.js';
 import type { XmlNode } from '../xml-adapter.js';
 import type { NumberingResolver } from './numbering-resolver.js';
 import { defaultParagraphParser, type ParagraphParser } from './paragraph-parser.js';
+import { formatBorderDef, parseTablePropertiesNode } from './table-properties.js';
 import type { StyleResolver } from './style-resolver.js';
 
 /**
@@ -23,13 +24,16 @@ export class StandardTableParser implements TableParser {
 
   parseTable(node: XmlNode, styleResolver?: StyleResolver, numberingResolver?: NumberingResolver): TableNode {
     let style: TableStyle | undefined;
+    let tableStyleId: string | undefined;
     let columnWidthsPt: number[] | undefined;
     const rows: TableRowNode[] = [];
 
     for (const child of node.children) {
       const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
       if (tag === 'tblpr') {
-        style = this.parseTableProperties(child);
+        style = parseTablePropertiesNode(child);
+        const styleRef = child.children.find((c) => c.nodeName.toLowerCase().endsWith('tblstyle'));
+        tableStyleId = styleRef?.attributes['w:val'] ?? styleRef?.attributes['val'];
       } else if (tag === 'tblgrid') {
         columnWidthsPt = this.parseTableGrid(child);
       } else if (tag === 'tr') {
@@ -39,65 +43,21 @@ export class StandardTableParser implements TableParser {
 
     this.resolveVerticalMerges(rows);
 
+    // Named table style (w:tblStyle) resolved through styles.xml. Direct
+    // formatting in w:tblPr wins over the style definition (v2 N8).
+    if (tableStyleId && styleResolver) {
+      const resolved = styleResolver.resolveTableStyle(tableStyleId);
+      if (Object.keys(resolved).length > 0) {
+        style = { ...resolved, ...style };
+      }
+    }
+
     return {
       type: 'table',
       style: style && Object.keys(style).length > 0 ? style : undefined,
       columnWidthsPt: columnWidthsPt && columnWidthsPt.length > 0 ? columnWidthsPt : undefined,
       rows,
     };
-  }
-
-  private parseTableProperties(node: XmlNode): TableStyle {
-    const style: TableStyle = {};
-
-    for (const child of node.children) {
-      const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
-
-      if (tag === 'jc') {
-        const val = (child.attributes['w:val'] ?? child.attributes['val'])?.toLowerCase();
-        if (val === 'center' || val === 'right' || val === 'left') {
-          style.alignment = val;
-        }
-      } else if (tag === 'tblw') {
-        const type = (child.attributes['w:type'] ?? child.attributes['type'])?.toLowerCase();
-        const wVal = Number(child.attributes['w:w'] ?? child.attributes['w']);
-        if (!Number.isNaN(wVal)) {
-          if (type === 'pct') {
-            style.widthPercent = wVal / 50;
-          } else if (type === 'dxa' || !type) {
-            style.widthPt = twipsToPt(wVal);
-          }
-        }
-      } else if (tag === 'tblborders') {
-        for (const bChild of child.children) {
-          const bTag = bChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
-          const bVal = bChild.attributes['w:val'] ?? bChild.attributes['val'];
-          const bColor = bChild.attributes['w:color'] ?? bChild.attributes['color'];
-          const borderDef = bVal && bVal !== 'none' ? `${bVal} ${bColor ? '#' + bColor : '#000000'}` : 'none';
-
-          if (bTag === 'top') style.borderTop = borderDef;
-          else if (bTag === 'right') style.borderRight = borderDef;
-          else if (bTag === 'bottom') style.borderBottom = borderDef;
-          else if (bTag === 'left') style.borderLeft = borderDef;
-          else if (bTag === 'insideh') style.borderInsideH = borderDef;
-          else if (bTag === 'insidev') style.borderInsideV = borderDef;
-        }
-      } else if (tag === 'tblcellmar') {
-        for (const mChild of child.children) {
-          const mTag = mChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
-          const wVal = Number(mChild.attributes['w:w'] ?? mChild.attributes['w']);
-          if (!Number.isNaN(wVal)) {
-            const pt = twipsToPt(wVal);
-            if (mTag === 'top') style.cellMarginTopPt = pt;
-            else if (mTag === 'right') style.cellMarginRightPt = pt;
-            else if (mTag === 'bottom') style.cellMarginBottomPt = pt;
-            else if (mTag === 'left') style.cellMarginLeftPt = pt;
-          }
-        }
-      }
-    }
-
-    return style;
   }
 
   private parseTableGrid(node: XmlNode): number[] {
@@ -169,6 +129,12 @@ export class StandardTableParser implements TableParser {
           if (originCell) {
             originCell.rowSpan = (originCell.rowSpan ?? 1) + 1;
             cell.rowSpan = 0;
+            // Vertically merged regions must paint their background across
+            // every covered row: continuation cells keep their own style but
+            // inherit the restart cell's shading when they have none (v2 N4).
+            if (originCell.style?.backgroundColor && !cell.style?.backgroundColor) {
+              cell.style = { ...cell.style, backgroundColor: originCell.style.backgroundColor };
+            }
           }
         } else {
           for (let s = 0; s < span; s++) {
@@ -257,7 +223,7 @@ export class StandardTableParser implements TableParser {
           const bTag = borderChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
           const bVal = borderChild.attributes['w:val'] ?? borderChild.attributes['val'];
           const bColor = borderChild.attributes['w:color'] ?? borderChild.attributes['color'];
-          const borderDef = bVal && bVal !== 'none' ? `${bVal} ${bColor ? '#' + bColor : '#000000'}` : 'none';
+          const borderDef = formatBorderDef(bVal, bColor, borderChild.attributes['w:sz'] ?? borderChild.attributes['sz']);
 
           if (bTag === 'top') style.borderTop = borderDef;
           else if (bTag === 'right') style.borderRight = borderDef;

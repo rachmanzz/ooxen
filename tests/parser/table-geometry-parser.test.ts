@@ -112,4 +112,26 @@ describe('Table Geometry & Properties Parser', () => {
     expect(cell.style?.paddingTopPt).toBe(5); // 100 / 20 = 5 pt
     expect(cell.style?.paddingLeftPt).toBe(8); // 160 / 20 = 8 pt
   });
+
+  it('keeps the border width (w:sz, eighths of a point) in the borderDef (v1 F10)', () => {
+    const xml = `
+<w:tbl xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:tblPr>
+    <w:tblBorders>
+      <w:top w:val="double" w:sz="12" w:color="003366"/>
+      <w:left w:val="single" w:color="000000"/>
+    </w:tblBorders>
+  </w:tblPr>
+  <w:tr>
+    <w:tc><w:tcPr><w:tcBorders><w:bottom w:val="single" w:sz="8" w:color="FF0000"/></w:tcBorders></w:tcPr><w:p/></w:tc>
+  </w:tr>
+</w:tbl>`;
+
+    const table = new StandardTableParser().parseTable(defaultXmlAdapter.parse(xml));
+
+    // 12/8 = 1.5pt, 8/8 = 1pt; borders without w:sz stay width-less.
+    expect(table.style?.borderTop).toBe('double #003366 1.5pt');
+    expect(table.style?.borderLeft).toBe('single #000000');
+    expect(table.rows[0]?.children[0]?.style?.borderBottom).toBe('single #FF0000 1pt');
+  });
 });

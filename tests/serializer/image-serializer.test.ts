@@ -90,7 +90,7 @@ describe('Image Serializer & Bidirectional HTML/DOCX Round-Trip', () => {
     const opc = await openPackage(docxBytes);
 
     // Verify binary media part exists in package
-    const mediaPart = opc.getPart('/word/media/image2.png') ?? opc.getPart('word/media/image2.png');
+    const mediaPart = opc.getPart('/word/media/image1.png') ?? opc.getPart('word/media/image1.png');
     expect(mediaPart).toBeDefined();
     expect(mediaPart?.contentType).toBe('image/png');
     expect(mediaPart?.data).toEqual(samplePngBytes);

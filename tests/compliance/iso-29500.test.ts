@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
-import { CONTENT_TYPES_NAMESPACE, KNOWN_CONTENT_TYPES } from '../../src/opc/content-types.js';
+import { KNOWN_CONTENT_TYPES } from '../../src/opc/content-types.js';
 import { openPackage } from '../../src/opc/package.js';
-import { KNOWN_RELATIONSHIPS, RELATIONSHIPS_NAMESPACE } from '../../src/opc/relationships.js';
+import { KNOWN_RELATIONSHIPS } from '../../src/opc/relationships.js';
 import { NAMESPACES } from '../../src/parser/namespaces.js';
 import { defaultXmlAdapter } from '../../src/parser/xml-adapter.js';
 import { exportOoxml } from '../../src/serializer/ooxen-writer.js';

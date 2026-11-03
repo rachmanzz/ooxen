@@ -55,3 +55,28 @@ export class SimpleTextMetricsMeasurer implements TextMetricsMeasurer {
 }
 
 export const defaultTextMetrics = new SimpleTextMetricsMeasurer();
+
+/**
+ * Monospace families have a uniform advance, so the per-character heuristics
+ * above (tuned for proportional faces) do not apply. They are measured with a
+ * fixed ~0.6 em advance instead. This is a documented approximation — a
+ * canvas-less environment cannot query real glyph metrics (v1 F6).
+ */
+const MONOSPACE_FAMILY_PATTERN = /courier|monaco|mono|consolas|menlo|fixed/i;
+
+export function isMonospaceFamily(fontFamily?: string): boolean {
+  return Boolean(fontFamily && MONOSPACE_FAMILY_PATTERN.test(fontFamily));
+}
+
+/**
+ * Standalone text width measurement shared by layout and renderers. Uses the
+ * proportional per-character heuristic, or a fixed advance for monospace
+ * families (v1 F6).
+ */
+export function measureTextWidth(text: string, fontSize: number, isBold = false, fontFamily?: string): number {
+  const boldFactor = isBold ? 1.06 : 1.0;
+  if (isMonospaceFamily(fontFamily)) {
+    return text.length * fontSize * 0.6 * boldFactor;
+  }
+  return defaultTextMetrics.measureText(text, { fontSizePt: fontSize, bold: isBold, fontFamily }).width;
+}

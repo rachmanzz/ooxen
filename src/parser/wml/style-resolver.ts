@@ -1,5 +1,6 @@
 import { twipsToPt } from '../../types/common.js';
-import type { ParagraphStyle, TabLeader, TabStop, TabStopAlignment, TextStyle } from '../../types/style.js';
+import type { ParagraphStyle, TableStyle, TabLeader, TabStop, TabStopAlignment, TextStyle } from '../../types/style.js';
+import { parseTablePropertiesNode } from './table-properties.js';
 import type { XmlNode } from '../xml-adapter.js';
 
 /**
@@ -14,6 +15,7 @@ export interface StyleDefinition {
   isDefault?: boolean;
   paragraphStyle?: ParagraphStyle;
   textStyle?: TextStyle;
+  tableStyle?: TableStyle;
 }
 
 export function parseRunProperties(node?: XmlNode): TextStyle {
@@ -100,10 +102,24 @@ export function parseParagraphProperties(node?: XmlNode): ParagraphStyle {
         const before = child.attributes['w:before'] ?? child.attributes['before'];
         const after = child.attributes['w:after'] ?? child.attributes['after'];
         const line = child.attributes['w:line'] ?? child.attributes['line'];
+        const lineRule = (
+          child.attributes['w:lineRule'] ?? child.attributes['lineRule'] ?? child.attributes['w:linerule'] ?? child.attributes['linerule'] ?? 'auto'
+        ).toLowerCase();
 
         if (before) style.spaceBeforePt = twipsToPt(Number(before));
         if (after) style.spaceAfterPt = twipsToPt(Number(after));
-        if (line) style.lineSpacingPt = twipsToPt(Number(line));
+        if (line) {
+          const lineVal = Number(line);
+          if (lineRule === 'exact' || lineRule === 'atLeast' || lineRule === 'atMost') {
+            // With an explicit rule, w:line is in twips.
+            style.lineSpacingPt = twipsToPt(lineVal);
+          } else {
+            // lineRule="auto" (the default): w:line is in 240ths of a line
+            // (v2 N9). The AST stores an absolute height, so approximate one
+            // single line as ~1.2 × the default 11pt body font (≈13.2pt).
+            style.lineSpacingPt = (lineVal / 240) * 13.2;
+          }
+        }
         break;
       }
       case 'ind': {
@@ -174,6 +190,7 @@ export interface StyleResolver {
   loadStyles(stylesXmlNode: XmlNode): void;
   resolveParagraphStyle(styleId?: string): ParagraphStyle;
   resolveRunStyle(styleId?: string): TextStyle;
+  resolveTableStyle(styleId?: string): TableStyle;
   getDefaultRunStyle(): TextStyle;
   getDefaultParagraphStyle(): ParagraphStyle;
 }
@@ -231,6 +248,7 @@ export class StandardStyleResolver implements StyleResolver {
     let name: string | undefined;
     let paragraphStyle: ParagraphStyle | undefined;
     let textStyle: TextStyle | undefined;
+    let tableStyle: TableStyle | undefined;
 
     for (const child of node.children) {
       const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
@@ -244,6 +262,10 @@ export class StandardStyleResolver implements StyleResolver {
         paragraphStyle = parseParagraphProperties(child);
       } else if (tag === 'rpr') {
         textStyle = parseRunProperties(child);
+      } else if (tag === 'tblpr') {
+        // Table style definitions embed their properties in w:tblPr —
+        // borders, cell margins, width, alignment (v2 N8).
+        tableStyle = parseTablePropertiesNode(child);
       }
     }
 
@@ -255,6 +277,7 @@ export class StandardStyleResolver implements StyleResolver {
       isDefault,
       paragraphStyle,
       textStyle,
+      tableStyle,
     };
 
     this.styles.set(id, def);
@@ -308,6 +331,31 @@ export class StandardStyleResolver implements StyleResolver {
     for (const def of chain) {
       if (def.textStyle) {
         result = { ...result, ...def.textStyle };
+      }
+    }
+
+    return result;
+  }
+
+  resolveTableStyle(styleId?: string): TableStyle {
+    // Unlike paragraph/run styles, table styles have no docDefaults seed:
+    // an absent style resolves to an empty (untouched) table.
+    if (!styleId) return {};
+
+    const chain: StyleDefinition[] = [];
+    let current = this.styles.get(styleId);
+    const visited = new Set<string>();
+
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      chain.unshift(current);
+      current = current.basedOn ? this.styles.get(current.basedOn) : undefined;
+    }
+
+    let result: TableStyle = {};
+    for (const def of chain) {
+      if (def.tableStyle) {
+        result = { ...result, ...def.tableStyle };
       }
     }
 

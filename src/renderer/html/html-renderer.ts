@@ -12,6 +12,7 @@ import type {
   VectorPathCommand,
 } from '../../types/ast.js';
 import { uint8ArrayToBase64 } from '../../types/common.js';
+import { parseBorderStyle } from '../../layout/page-engine.js';
 import { defaultStyleMapper, type StyleMapper } from './style-mapper.js';
 
 function escapeXml(text: string): string {
@@ -21,6 +22,27 @@ function escapeXml(text: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+/** OOXML border styles that have no direct CSS equivalent map to 'solid'. */
+const BORDER_STYLE_TO_CSS: Record<string, string> = {
+  single: 'solid',
+  dashed: 'dashed',
+  dotted: 'dotted',
+  double: 'double',
+  wave: 'solid',
+};
+
+/**
+ * Converts a borderDef string ("single #000000") into valid CSS border
+ * shorthand. Writing the raw borderDef into CSS produces an invalid
+ * declaration (`border-top: single #000000`) that browsers drop (v2 N6).
+ */
+function borderDefToCss(def: string): string {
+  const parsed = parseBorderStyle(def);
+  if (!parsed) return 'none';
+  const cssStyle = BORDER_STYLE_TO_CSS[parsed.style ?? 'single'] ?? 'solid';
+  return `${parsed.widthPt ?? 1}pt ${cssStyle} ${parsed.color ?? '#000000'}`;
 }
 
 function commandsToSvgPath(commands: VectorPathCommand[]): string {
@@ -256,8 +278,10 @@ export class StandardHtmlRenderer implements HtmlRenderer {
     if (run.footnoteRef) {
       const refKind = run.footnoteRef.kind;
       const prefix = refKind === 'footnote' ? 'fn' : 'en';
-      const mark = run.footnoteRef.mark ?? run.footnoteRef.id;
-      outHtml = `<sup class="ooxen-${refKind}-ref"><a href="#${prefix}-${run.footnoteRef.id}">[${mark}]</a></sup>`;
+      // A custom mark is rendered verbatim; the numeric-id fallback keeps the
+      // conventional bracket formatting (v2 N12).
+      const markHtml = run.footnoteRef.mark ? escapeXml(run.footnoteRef.mark) : `[${run.footnoteRef.id}]`;
+      outHtml = `<sup class="ooxen-${refKind}-ref"><a href="#${prefix}-${run.footnoteRef.id}">${markHtml}</a></sup>`;
     } else if (run.hyperlink) {
       const href = run.hyperlink.url
         ? ` href="${escapeXml(run.hyperlink.url)}"`
@@ -312,10 +336,10 @@ export class StandardHtmlRenderer implements HtmlRenderer {
       tableStyle['margin-right'] = 'auto';
     }
 
-    if (table.style?.borderTop) tableStyle['border-top'] = table.style.borderTop;
-    if (table.style?.borderRight) tableStyle['border-right'] = table.style.borderRight;
-    if (table.style?.borderBottom) tableStyle['border-bottom'] = table.style.borderBottom;
-    if (table.style?.borderLeft) tableStyle['border-left'] = table.style.borderLeft;
+    if (table.style?.borderTop) tableStyle['border-top'] = borderDefToCss(table.style.borderTop);
+    if (table.style?.borderRight) tableStyle['border-right'] = borderDefToCss(table.style.borderRight);
+    if (table.style?.borderBottom) tableStyle['border-bottom'] = borderDefToCss(table.style.borderBottom);
+    if (table.style?.borderLeft) tableStyle['border-left'] = borderDefToCss(table.style.borderLeft);
 
     const styleAttr = ` style="${escapeXml(this.styleMapper.toCssString(tableStyle))}"`;
 
@@ -353,10 +377,10 @@ export class StandardHtmlRenderer implements HtmlRenderer {
     if (cell.style?.backgroundColor) {
       styleObj['background-color'] = cell.style.backgroundColor;
     }
-    if (cell.style?.borderTop) styleObj['border-top'] = cell.style.borderTop;
-    if (cell.style?.borderRight) styleObj['border-right'] = cell.style.borderRight;
-    if (cell.style?.borderBottom) styleObj['border-bottom'] = cell.style.borderBottom;
-    if (cell.style?.borderLeft) styleObj['border-left'] = cell.style.borderLeft;
+    if (cell.style?.borderTop) styleObj['border-top'] = borderDefToCss(cell.style.borderTop);
+    if (cell.style?.borderRight) styleObj['border-right'] = borderDefToCss(cell.style.borderRight);
+    if (cell.style?.borderBottom) styleObj['border-bottom'] = borderDefToCss(cell.style.borderBottom);
+    if (cell.style?.borderLeft) styleObj['border-left'] = borderDefToCss(cell.style.borderLeft);
 
     if (cell.style?.verticalAlign) {
       styleObj['vertical-align'] = cell.style.verticalAlign === 'center' ? 'middle' : cell.style.verticalAlign;

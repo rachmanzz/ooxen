@@ -27,6 +27,42 @@ function cleanHexColor(color?: string): string | undefined {
   return color.replace(/^#/, '').toUpperCase();
 }
 
+/** ST_HighlightColor values from ISO/IEC 29500-1 (lowercase). */
+const HIGHLIGHT_COLORS = new Set([
+  'black',
+  'blue',
+  'cyan',
+  'darkblue',
+  'darkcyan',
+  'darkgray',
+  'darkgreen',
+  'darkmagenta',
+  'darkred',
+  'darkyellow',
+  'green',
+  'lightgray',
+  'magenta',
+  'red',
+  'white',
+  'yellow',
+]);
+
+/**
+ * Serializes a background color into run/cell shading. Named highlight colors
+ * must round-trip as <w:highlight> (not as a shading fill, which requires a
+ * hex value), and only valid hex colors may become a fill (v2 N9).
+ */
+function buildShadingXml(backgroundColor: string): string {
+  const bare = backgroundColor.replace(/^#/, '');
+  if (HIGHLIGHT_COLORS.has(bare.toLowerCase())) {
+    return `<w:highlight w:val="${bare.toLowerCase()}"/>`;
+  }
+  if (/^[0-9a-fA-F]{6}$/.test(bare)) {
+    return `<w:shd w:val="clear" w:color="auto" w:fill="${bare.toUpperCase()}"/>`;
+  }
+  return '';
+}
+
 /**
  * Builds standard ISO/IEC 29500-1 WordprocessingML, DrawingML shapes, and picture XML strings.
  */
@@ -333,7 +369,13 @@ export class StandardWmlBuilder implements WmlBuilder {
       const attrs: string[] = [];
       if (style.spaceBeforePt !== undefined) attrs.push(`w:before="${Math.round(ptToTwips(style.spaceBeforePt))}"`);
       if (style.spaceAfterPt !== undefined) attrs.push(`w:after="${Math.round(ptToTwips(style.spaceAfterPt))}"`);
-      if (style.lineSpacingPt !== undefined) attrs.push(`w:line="${Math.round(ptToTwips(style.lineSpacingPt))}"`);
+      if (style.lineSpacingPt !== undefined) {
+        // ISO/IEC 29500-1: w:line is in twips only when w:lineRule is
+        // "exact"/"atLeast"; without a rule it means 240ths of a line.
+        // Emit the rule explicitly so the unit is unambiguous (v2 N9).
+        attrs.push(`w:line="${Math.round(ptToTwips(style.lineSpacingPt))}"`);
+        attrs.push('w:lineRule="atLeast"');
+      }
       inner.push(`      <w:spacing ${attrs.join(' ')}/>`);
     }
 
@@ -536,7 +578,7 @@ export class StandardWmlBuilder implements WmlBuilder {
       `            <wp:extent cx="${cx}" cy="${cy}"/>`,
       `            <wp:docPr id="${escapeXml(id)}" name="${escapeXml(name)}"/>`,
       '            <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">',
-      '              <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">',
+      '              <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">',
       '                <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">',
       '                  <wps:spPr>',
       '                    <a:xfrm>',
@@ -589,7 +631,8 @@ export class StandardWmlBuilder implements WmlBuilder {
       inner.push(`        <w:color w:val="${cleanHexColor(style.color)}"/>`);
     }
     if (style.backgroundColor) {
-      inner.push(`        <w:shd w:fill="${cleanHexColor(style.backgroundColor)}"/>`);
+      const shading = buildShadingXml(style.backgroundColor);
+      if (shading) inner.push(`        ${shading}`);
     }
     if (style.verticalAlign) {
       inner.push(`        <w:vertAlign w:val="${style.verticalAlign}"/>`);
@@ -681,7 +724,18 @@ export class StandardWmlBuilder implements WmlBuilder {
     const parts = borderDef.trim().split(/\s+/);
     const borderType = parts[0] === 'solid' ? 'single' : (parts[0] || 'single');
     const borderCol = parts[1] ? cleanHexColor(parts[1]) : 'auto';
-    return `${indent}<w:${tag} w:val="${borderType}" w:sz="4" w:space="0" w:color="${borderCol}"/>`;
+    // Recover the authored thickness from the borderDef's trailing pt token
+    // (w:sz is in eighths of a point); default 4 = 0.5pt (v1 F10).
+    let sz = 4;
+    const widthToken = parts.find((p) => /^\d*\.?\d+(pt|px)$/i.test(p));
+    if (widthToken) {
+      const num = Number.parseFloat(widthToken);
+      if (!Number.isNaN(num) && num > 0) {
+        const pt = widthToken.toLowerCase().endsWith('px') ? num * 0.75 : num;
+        sz = Math.max(2, Math.round(pt * 8));
+      }
+    }
+    return `${indent}<w:${tag} w:val="${borderType}" w:sz="${sz}" w:space="0" w:color="${borderCol}"/>`;
   }
 
   private serializeTableRow(row: TableRowNode, hyperlinkRelIds?: Map<string, string>): string {
@@ -739,7 +793,8 @@ export class StandardWmlBuilder implements WmlBuilder {
       inner.push('            <w:vMerge/>');
     }
     if (style?.backgroundColor) {
-      inner.push(`            <w:shd w:fill="${cleanHexColor(style.backgroundColor)}"/>`);
+      const shading = buildShadingXml(style.backgroundColor);
+      if (shading) inner.push(`            ${shading}`);
     }
     if (style?.verticalAlign) {
       inner.push(`            <w:vAlign w:val="${style.verticalAlign}"/>`);
@@ -783,7 +838,11 @@ export class StandardWmlBuilder implements WmlBuilder {
     return ['          <w:tcPr>', ...inner, '          </w:tcPr>'].join('\n');
   }
 
-  private serializeSectionProperties(
+  /**
+   * Serializes a section's w:sectPr. Public because section properties are an
+   * independently testable and externally reusable serialization unit.
+   */
+  serializeSectionProperties(
     section: SectionNode,
     indent: string = '    ',
     headerFooterRelIds?: Map<HeaderFooterNode, string>,

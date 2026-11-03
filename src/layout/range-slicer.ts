@@ -1,4 +1,4 @@
-import type { ParagraphNode, RunNode } from '../types/ast.js';
+import type { FootnoteReference, ParagraphNode, RevisionInfo, RunNode } from '../types/ast.js';
 import type { TextStyle } from '../types/style.js';
 
 /**
@@ -18,6 +18,20 @@ function areTextStylesEqual(a?: TextStyle, b?: TextStyle): boolean {
     a.color === b.color &&
     a.backgroundColor === b.backgroundColor
   );
+}
+
+function sameOptional<T>(a: T | undefined, b: T | undefined, eq: (x: T, y: T) => boolean): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return eq(a, b);
+}
+
+function sameFootnoteRef(a?: FootnoteReference, b?: FootnoteReference): boolean {
+  return sameOptional(a, b, (x, y) => x.id === y.id && x.kind === y.kind);
+}
+
+function sameRevisionInfo(a?: RevisionInfo, b?: RevisionInfo): boolean {
+  return sameOptional(a, b, (x, y) => x.type === y.type && x.id === y.id && x.author === y.author && x.date === y.date);
 }
 
 /**
@@ -43,6 +57,11 @@ export function coalesceRuns(runs: RunNode[]): RunNode[] {
         style: run.style ? { ...run.style } : undefined,
         drawing: run.drawing,
         image: run.image,
+        footnoteRef: run.footnoteRef ? { ...run.footnoteRef } : undefined,
+        commentId: run.commentId,
+        breakType: run.breakType,
+        revision: run.revision,
+        isTab: run.isTab,
       });
       continue;
     }
@@ -51,6 +70,14 @@ export function coalesceRuns(runs: RunNode[]): RunNode[] {
     const sameHyperlink = last?.hyperlink?.url === run.hyperlink?.url && last?.hyperlink?.anchor === run.hyperlink?.anchor;
     const sameBookmark = last?.bookmarkName === run.bookmarkName;
     const sameField = last?.field === run.field;
+    // Runs carrying structural metadata must not be merged across different
+    // values, and every rebuilt run must keep that metadata — otherwise a
+    // styled-range edit silently strips it (v2 N5).
+    const sameFootnote = sameFootnoteRef(last?.footnoteRef, run.footnoteRef);
+    const sameComment = last?.commentId === run.commentId;
+    const sameBreak = last?.breakType === run.breakType;
+    const sameRevision = sameRevisionInfo(last?.revision, run.revision);
+    const sameTab = Boolean(last?.isTab) === Boolean(run.isTab);
 
     if (
       last &&
@@ -59,7 +86,12 @@ export function coalesceRuns(runs: RunNode[]): RunNode[] {
       areTextStylesEqual(last.style, run.style) &&
       sameHyperlink &&
       sameBookmark &&
-      sameField
+      sameField &&
+      sameFootnote &&
+      sameComment &&
+      sameBreak &&
+      sameRevision &&
+      sameTab
     ) {
       last.text += run.text;
     } else {
@@ -69,6 +101,11 @@ export function coalesceRuns(runs: RunNode[]): RunNode[] {
         style: run.style ? { ...run.style } : undefined,
         hyperlink: run.hyperlink ? { ...run.hyperlink } : undefined,
         bookmarkName: run.bookmarkName,
+        footnoteRef: run.footnoteRef ? { ...run.footnoteRef } : undefined,
+        commentId: run.commentId,
+        breakType: run.breakType,
+        revision: run.revision,
+        isTab: run.isTab,
         field: run.field,
       });
     }
@@ -128,6 +165,11 @@ export function sliceParagraphRange(
         image: run.image,
         hyperlink: run.hyperlink ? { ...run.hyperlink } : undefined,
         bookmarkName: run.bookmarkName,
+        footnoteRef: run.footnoteRef,
+        commentId: run.commentId,
+        breakType: run.breakType,
+        revision: run.revision,
+        isTab: run.isTab,
         field: run.field,
       });
     } else if (runStart >= start && runEnd <= end) {
@@ -140,6 +182,11 @@ export function sliceParagraphRange(
         image: run.image,
         hyperlink: run.hyperlink ? { ...run.hyperlink } : undefined,
         bookmarkName: run.bookmarkName,
+        footnoteRef: run.footnoteRef,
+        commentId: run.commentId,
+        breakType: run.breakType,
+        revision: run.revision,
+        isTab: run.isTab,
         field: run.field,
       });
     } else {
@@ -158,6 +205,11 @@ export function sliceParagraphRange(
           style: run.style ? { ...run.style } : undefined,
           hyperlink: run.hyperlink ? { ...run.hyperlink } : undefined,
           bookmarkName: run.bookmarkName,
+          footnoteRef: run.footnoteRef,
+          commentId: run.commentId,
+          breakType: run.breakType,
+          revision: run.revision,
+          isTab: run.isTab,
           field: run.field,
         });
       }
@@ -169,6 +221,11 @@ export function sliceParagraphRange(
           style: { ...run.style, ...patchStyle },
           hyperlink: run.hyperlink ? { ...run.hyperlink } : undefined,
           bookmarkName: run.bookmarkName,
+          footnoteRef: run.footnoteRef,
+          commentId: run.commentId,
+          breakType: run.breakType,
+          revision: run.revision,
+          isTab: run.isTab,
           field: run.field,
         });
       }
@@ -180,6 +237,11 @@ export function sliceParagraphRange(
           style: run.style ? { ...run.style } : undefined,
           hyperlink: run.hyperlink ? { ...run.hyperlink } : undefined,
           bookmarkName: run.bookmarkName,
+          footnoteRef: run.footnoteRef,
+          commentId: run.commentId,
+          breakType: run.breakType,
+          revision: run.revision,
+          isTab: run.isTab,
           field: run.field,
         });
       }

@@ -84,9 +84,30 @@ export class StandardPackageBuilder implements PackageBuilder {
   ): OpcPackage {
     const pkg = createPackage();
 
+    // Caller-supplied relationship ids (media, headers/footers, hyperlinks)
+    // are emitted as-is. Allocate this builder's own ids for the document,
+    // styles, and numbering relationships from the remaining free space so
+    // they can never collide with caller ids — addRelationship() deduplicates
+    // by id, which would silently drop one of the two relationships (v2 N2).
+    const usedRelIds = new Set<string>(['rIdFootnotes', 'rIdEndnotes', 'rIdCore', 'rIdApp', 'rIdComments']);
+    for (const id of [
+      ...mediaParts.map((m) => m.relationshipId),
+      ...headerFooterParts.map((h) => h.relationshipId),
+      ...externalRelationships.map((r) => r.id),
+    ]) {
+      if (id) usedRelIds.add(id);
+    }
+    const nextRelId = (): string => {
+      let n = 1;
+      while (usedRelIds.has(`rId${n}`)) n++;
+      const id = `rId${n}`;
+      usedRelIds.add(id);
+      return id;
+    };
+
     // 1. Root Relationship to document.xml
     pkg.addRelationship(undefined, {
-      id: 'rId1',
+      id: nextRelId(),
       type: KNOWN_RELATIONSHIPS.DOCUMENT,
       target: 'word/document.xml',
     });
@@ -101,7 +122,7 @@ export class StandardPackageBuilder implements PackageBuilder {
     // 3. Add styles.xml part & relationship
     const stylesXml = customStylesXml ?? this.stylesBuilder.buildDefaultStylesXml();
     pkg.addRelationship('word/document.xml', {
-      id: 'rId2',
+      id: nextRelId(),
       type: KNOWN_RELATIONSHIPS.STYLES,
       target: 'styles.xml',
     });
@@ -116,7 +137,7 @@ export class StandardPackageBuilder implements PackageBuilder {
     if (customNumberingXml || documentXml.includes('<w:numPr>')) {
       const numXml = customNumberingXml ?? this.numberingBuilder.buildDefaultNumberingXml();
       pkg.addRelationship('word/document.xml', {
-        id: 'rId3',
+        id: nextRelId(),
         type: KNOWN_RELATIONSHIPS.NUMBERING,
         target: 'numbering.xml',
       });

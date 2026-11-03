@@ -30,7 +30,6 @@ export type VectorPathCommandType =
   | 'lineTo'
   | 'cubicBezTo'
   | 'quadBezTo'
-  | 'arcTo'
   | 'close';
 
 export interface VectorPathCommand {

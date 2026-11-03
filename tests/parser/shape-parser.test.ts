@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { generatePresetGeometry, parseDrawingNode, parseSvgPathToCommands, parseVmlPath } from '../../src/parser/dml/shape-parser.js';
+import { generatePresetGeometry, parseDrawingNode, parseSvgPathToCommands } from '../../src/parser/dml/shape-parser.js';
 import { defaultXmlAdapter } from '../../src/parser/xml-adapter.js';
 
 describe('DrawingML & Vector Shape Parser', () => {
