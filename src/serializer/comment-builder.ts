@@ -1,5 +1,5 @@
 import type { CommentNode } from '../types/ast.js';
-import { defaultWmlBuilder, escapeXml, type WmlBuilder } from './wml-builder.js';
+import { commentNumericId, defaultWmlBuilder, escapeXml, type WmlBuilder } from './wml-builder.js';
 
 /**
  * Serializer for ISO/IEC 29500-1 Comments (word/comments.xml).
@@ -32,7 +32,7 @@ export class StandardCommentBuilder implements CommentBuilder {
           })
           .join('\n');
 
-        return `  <w:comment w:id="${escapeXml(comment.id)}"${authorAttr}${dateAttr}${initialsAttr}>\n${paragraphs}\n  </w:comment>`;
+        return `  <w:comment w:id="${commentNumericId(comments, comment.id)}"${authorAttr}${dateAttr}${initialsAttr}>\n${paragraphs}\n  </w:comment>`;
       })
       .join('\n');
 

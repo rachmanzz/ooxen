@@ -1,4 +1,5 @@
 import type {
+  CommentNode,
   DocumentNode,
   DrawingShapeNode,
   HeaderFooterNode,
@@ -12,6 +13,28 @@ import type {
 } from '../types/ast.js';
 import { ptToEmu, ptToTwips } from '../types/common.js';
 import type { ParagraphStyle, TableStyle, TextStyle } from '../types/style.js';
+
+/**
+ * ISO/IEC 29500-1 requires w:comment/@w:id (and the commentRange markers in
+ * document.xml) to be a decimal number, while the AST allows arbitrary string
+ * ids. Comments listed in the document map to their 1-based position so
+ * comments.xml and document.xml agree; orphaned ids fall back to a stable
+ * hash (Fase-4 audit: XSD conformance).
+ */
+export function commentNumericId(comments: CommentNode[], id: string): number {
+  const index = comments.findIndex((comment) => comment.id === id);
+  if (index >= 0) return index + 1;
+  // Ids that are already decimal numbers pass through unchanged (e.g. a
+  // paragraph serialized standalone without document comment scope).
+  if (/^\d+$/.test(id)) {
+    const numeric = Number(id);
+    if (numeric > 0) return numeric;
+  }
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = ((hash << 5) - hash + id.charCodeAt(i)) | 0;
+  const fallback = Math.abs(hash);
+  return fallback > 0 ? fallback : 1;
+}
 
 export function escapeXml(text: string): string {
   return text
@@ -80,11 +103,15 @@ export interface WmlBuilder {
 }
 
 export class StandardWmlBuilder implements WmlBuilder {
+  /** Comment nodes of the document currently being serialized (id scope). */
+  private commentIdScope: CommentNode[] = [];
+
   buildDocumentXml(
     document: DocumentNode,
     headerFooterRelIds?: Map<HeaderFooterNode, string>,
     hyperlinkRelIds?: Map<string, string>,
   ): string {
+    this.commentIdScope = document.comments ?? [];
     const lines: string[] = [
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
       '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">',
@@ -214,16 +241,17 @@ export class StandardWmlBuilder implements WmlBuilder {
 
       const inner = this.serializeRunsGroup(cGroup, hyperlinkRelIds);
       if (currentCid) {
+        const numericId = commentNumericId(this.commentIdScope, currentCid);
         pieces.push(
           [
-            `      <w:commentRangeStart w:id="${escapeXml(currentCid)}"/>`,
+            `      <w:commentRangeStart w:id="${numericId}"/>`,
             inner,
-            `      <w:commentRangeEnd w:id="${escapeXml(currentCid)}"/>`,
+            `      <w:commentRangeEnd w:id="${numericId}"/>`,
             '      <w:r>',
             '        <w:rPr>',
             '          <w:rStyle w:val="CommentReference"/>',
             '        </w:rPr>',
-            `        <w:commentReference w:id="${escapeXml(currentCid)}"/>`,
+            `        <w:commentReference w:id="${numericId}"/>`,
             '      </w:r>',
           ]
             .filter(Boolean)
@@ -349,9 +377,16 @@ export class StandardWmlBuilder implements WmlBuilder {
     if (!style) return '';
     const inner: string[] = [];
 
-    if (style.alignment) {
-      const jcVal = style.alignment === 'justify' ? 'both' : style.alignment;
-      inner.push(`      <w:jc w:val="${jcVal}"/>`);
+    // Children must follow the CT_PPrBase schema sequence:
+    // pageBreakBefore, keepNext, keepLines, numPr, tabs, spacing, ind, jc.
+    if (style.pageBreakBefore) {
+      inner.push('      <w:pageBreakBefore/>');
+    }
+    if (style.keepNext) {
+      inner.push('      <w:keepNext/>');
+    }
+    if (style.keepLines) {
+      inner.push('      <w:keepLines/>');
     }
 
     if (style.numbering) {
@@ -363,6 +398,16 @@ export class StandardWmlBuilder implements WmlBuilder {
           '      </w:numPr>',
         ].join('\n')
       );
+    }
+
+    if (style.tabStops && style.tabStops.length > 0) {
+      const tabElements = style.tabStops.map((ts) => {
+        const valAttr = `w:val="${ts.alignment ?? 'left'}"`;
+        const posAttr = `w:pos="${Math.round(ptToTwips(ts.positionPt))}"`;
+        const leaderAttr = ts.leader && ts.leader !== 'none' ? ` w:leader="${ts.leader}"` : '';
+        return `        <w:tab ${valAttr} ${posAttr}${leaderAttr}/>`;
+      });
+      inner.push(['      <w:tabs>', ...tabElements, '      </w:tabs>'].join('\n'));
     }
 
     if (style.spaceBeforePt !== undefined || style.spaceAfterPt !== undefined || style.lineSpacingPt !== undefined) {
@@ -387,24 +432,9 @@ export class StandardWmlBuilder implements WmlBuilder {
       inner.push(`      <w:ind ${attrs.join(' ')}/>`);
     }
 
-    if (style.pageBreakBefore) {
-      inner.push('      <w:pageBreakBefore/>');
-    }
-    if (style.keepNext) {
-      inner.push('      <w:keepNext/>');
-    }
-    if (style.keepLines) {
-      inner.push('      <w:keepLines/>');
-    }
-
-    if (style.tabStops && style.tabStops.length > 0) {
-      const tabElements = style.tabStops.map((ts) => {
-        const valAttr = `w:val="${ts.alignment ?? 'left'}"`;
-        const posAttr = `w:pos="${Math.round(ptToTwips(ts.positionPt))}"`;
-        const leaderAttr = ts.leader && ts.leader !== 'none' ? ` w:leader="${ts.leader}"` : '';
-        return `        <w:tab ${valAttr} ${posAttr}${leaderAttr}/>`;
-      });
-      inner.push(['      <w:tabs>', ...tabElements, '      </w:tabs>'].join('\n'));
+    if (style.alignment) {
+      const jcVal = style.alignment === 'justify' ? 'both' : style.alignment;
+      inner.push(`      <w:jc w:val="${jcVal}"/>`);
     }
 
     if (inner.length === 0) return '';
@@ -663,14 +693,15 @@ export class StandardWmlBuilder implements WmlBuilder {
 
     const inner: string[] = [];
 
-    if (style.alignment) {
-      inner.push(`        <w:jc w:val="${style.alignment}"/>`);
-    }
-
+    // Schema order: tblW (CT_TblPrBase) precedes jc.
     if (style.widthPercent !== undefined) {
       inner.push(`        <w:tblW w:w="${Math.round(style.widthPercent * 50)}" w:type="pct"/>`);
     } else if (style.widthPt !== undefined) {
       inner.push(`        <w:tblW w:w="${Math.round(ptToTwips(style.widthPt))}" w:type="dxa"/>`);
+    }
+
+    if (style.alignment) {
+      inner.push(`        <w:jc w:val="${style.alignment}"/>`);
     }
 
     // Borders
@@ -781,6 +812,9 @@ export class StandardWmlBuilder implements WmlBuilder {
     const inner: string[] = [];
     const { style, colSpan, widthPt } = cell;
 
+    // Schema order (CT_TcPrBase): tcW, gridSpan, vMerge, tcBorders, shd,
+    // tcMar, vAlign.
+
     if (widthPt !== undefined) {
       inner.push(`            <w:tcW w:w="${Math.round(ptToTwips(widthPt))}" w:type="dxa"/>`);
     }
@@ -792,13 +826,6 @@ export class StandardWmlBuilder implements WmlBuilder {
     } else if (cell.vMerge === 'continue' || cell.rowSpan === 0) {
       inner.push('            <w:vMerge/>');
     }
-    if (style?.backgroundColor) {
-      const shading = buildShadingXml(style.backgroundColor);
-      if (shading) inner.push(`            ${shading}`);
-    }
-    if (style?.verticalAlign) {
-      inner.push(`            <w:vAlign w:val="${style.verticalAlign}"/>`);
-    }
 
     // Cell borders
     const borders: string[] = [];
@@ -808,6 +835,11 @@ export class StandardWmlBuilder implements WmlBuilder {
     if (style?.borderRight) borders.push(this.formatBorderElement('right', style.borderRight, '              '));
     if (borders.length > 0) {
       inner.push('            <w:tcBorders>', ...borders, '            </w:tcBorders>');
+    }
+
+    if (style?.backgroundColor) {
+      const shading = buildShadingXml(style.backgroundColor);
+      if (shading) inner.push(`            ${shading}`);
     }
 
     // Cell margins (padding)
@@ -832,6 +864,10 @@ export class StandardWmlBuilder implements WmlBuilder {
         margins.push(`              <w:right w:w="${Math.round(ptToTwips(style.paddingRightPt))}" w:type="dxa"/>`);
       }
       inner.push('            <w:tcMar>', ...margins, '            </w:tcMar>');
+    }
+
+    if (style?.verticalAlign) {
+      inner.push(`            <w:vAlign w:val="${style.verticalAlign}"/>`);
     }
 
     if (inner.length === 0) return '';
@@ -928,7 +964,7 @@ export class StandardWmlBuilder implements WmlBuilder {
       typeXml,
       pgNumTypeXml,
       `${indent}  <w:pgSz w:w="${wTwips}" w:h="${hTwips}"${orientAttr}/>`,
-      `${indent}  <w:pgMar w:top="${topTwips}" w:right="${rightTwips}" w:bottom="${bottomTwips}" w:left="${leftTwips}" w:header="${headerTwips}" w:footer="${footerTwips}"/>`,
+      `${indent}  <w:pgMar w:top="${topTwips}" w:right="${rightTwips}" w:bottom="${bottomTwips}" w:left="${leftTwips}" w:header="${headerTwips}" w:footer="${footerTwips}" w:gutter="0"/>`,
       colsXml,
       titlePgXml,
       `${indent}</w:sectPr>`,

@@ -133,7 +133,9 @@ describe('ISO/IEC 29500 Comments & Review Annotations Serializer & Round-Trip', 
       expect(comRel?.target).toBe('comments.xml');
 
       const commentsXml = decoder.decode(comPart!.data);
-      expect(commentsXml).toContain('w:id="c1"');
+      // ISO/IEC 29500-1 requires w:comment/@w:id to be ST_DecimalNumber, so
+      // string AST ids are mapped to their 1-based position in the package.
+      expect(commentsXml).toContain('w:id="1"');
       expect(commentsXml).toContain('w:author="Author Name"');
       expect(commentsXml).toContain('Please review this wording.');
 
@@ -141,13 +143,13 @@ describe('ISO/IEC 29500 Comments & Review Annotations Serializer & Round-Trip', 
       const reloadedDoc = await openDocument(docxBytes);
       expect(reloadedDoc.comments).toBeDefined();
       expect(reloadedDoc.comments?.length).toBe(1);
-      expect(reloadedDoc.comments?.[0]?.id).toBe('c1');
+      expect(reloadedDoc.comments?.[0]?.id).toBe('1');
       expect(reloadedDoc.comments?.[0]?.author).toBe('Author Name');
 
       const reloadedPara = reloadedDoc.sections[0]?.children[0];
       expect(reloadedPara?.type).toBe('paragraph');
       if (reloadedPara?.type === 'paragraph') {
-        const commentedRun = reloadedPara.children.find((r) => r.commentId === 'c1');
+        const commentedRun = reloadedPara.children.find((r) => r.commentId === '1');
         expect(commentedRun).toBeDefined();
         expect(commentedRun?.text).toBe('reviewed text');
       }

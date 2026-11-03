@@ -21,7 +21,8 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "typecheck:tests": "tsc --noEmit -p tsconfig.test.json",
-    "test": "bun test"
+    "test": "bun test",
+    "audit:validate": "bun scripts/audit/make-sample.ts \"${TMPDIR:-/tmp}/ooxen-audit/sample.docx\" && python3 scripts/audit/validate.py \"${TMPDIR:-/tmp}/ooxen-audit/sample.docx\""
   },
   "keywords": [
     "ooxml",
