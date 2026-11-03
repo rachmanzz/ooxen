@@ -1,4 +1,12 @@
-import type { DocumentNode, FootnoteNode, HeaderFooterNode, ParagraphNode, SectionNode, TableNode } from '../types/ast.js';
+import type {
+  DocumentNode,
+  FootnoteNode,
+  HeaderFooterNode,
+  PageOrientation,
+  ParagraphNode,
+  SectionNode,
+  TableNode,
+} from '../types/ast.js';
 import type { Margins, Size } from '../types/common.js';
 import { defaultLineBreaker, type LayoutLine, type LineBreaker } from './line-breaker.js';
 
@@ -7,13 +15,59 @@ import { defaultLineBreaker, type LayoutLine, type LineBreaker } from './line-br
  */
 
 export interface PageLayout {
-  pageIndex: number;
+  pageIndex: number; // 0-based physical page index
+  pageNumber: number; // 1-based logical page number (respecting restarts)
+  totalPageCount?: number;
+  formattedPageNumber?: string;
+  orientation: PageOrientation;
   size: Size; // points
   margins: Margins; // points
   lines: LayoutLine[];
   headerLines?: LayoutLine[];
   footerLines?: LayoutLine[];
   footnoteLines?: LayoutLine[];
+}
+
+export function formatPageNumber(num: number, format?: string): string {
+  if (num <= 0) return String(num);
+  const fmt = format?.toLowerCase();
+  if (fmt === 'upperroman' || fmt === 'lowerroman') {
+    const romanNumerals: [number, string][] = [
+      [1000, 'M'],
+      [900, 'CM'],
+      [500, 'D'],
+      [400, 'CD'],
+      [100, 'C'],
+      [90, 'XC'],
+      [50, 'L'],
+      [40, 'XL'],
+      [10, 'X'],
+      [9, 'IX'],
+      [5, 'V'],
+      [4, 'IV'],
+      [1, 'I'],
+    ];
+    let result = '';
+    let val = num;
+    for (const [v, r] of romanNumerals) {
+      while (val >= v) {
+        result += r;
+        val -= v;
+      }
+    }
+    return fmt === 'lowerroman' ? result.toLowerCase() : result;
+  }
+  if (fmt === 'upperletter' || fmt === 'lowerletter') {
+    let result = '';
+    let val = num;
+    while (val > 0) {
+      val--;
+      result = String.fromCharCode(65 + (val % 26)) + result;
+      val = Math.floor(val / 26);
+    }
+    return fmt === 'lowerletter' ? result.toLowerCase() : result;
+  }
+  return String(num);
 }
 
 export interface PageEngine {
@@ -30,11 +84,84 @@ export class StandardPageEngine implements PageEngine {
   layoutDocument(document: DocumentNode): PageLayout[] {
     const pages: PageLayout[] = [];
     const pageMetas: { page: PageLayout; section: SectionNode; sectionPageIndex: number }[] = [];
+    let currentLogicalPageNumber = 1;
 
-    for (const section of document.sections) {
+    for (let sIdx = 0; sIdx < document.sections.length; sIdx++) {
+      const section = document.sections[sIdx]!;
       const { pageSize, margins } = section.properties;
+      const orientation: PageOrientation =
+        section.properties.orientation ?? (pageSize.width > pageSize.height ? 'landscape' : 'portrait');
+
+      // Restart or set logical page numbering if configured (w:pgNumType)
+      if (section.properties.pageNumbering?.start !== undefined) {
+        currentLogicalPageNumber = section.properties.pageNumbering.start;
+      }
+      const currentNumberingFormat = section.properties.pageNumbering?.format;
+
       const contentWidth = Math.max(50, pageSize.width - margins.left - margins.right);
       const contentHeight = Math.max(50, pageSize.height - margins.top - margins.bottom);
+
+      // Section Break Transitions (w:type)
+      const breakType = section.properties.type ?? 'nextPage';
+      let resumedPage: PageLayout | undefined;
+      let resumedMeta: { page: PageLayout; section: SectionNode; sectionPageIndex: number } | undefined;
+      let resumedUsedHeight = 0;
+
+      if (sIdx > 0) {
+        if (breakType === 'evenPage') {
+          // Must start on even physical page (pageIndex % 2 === 1)
+          if (pages.length % 2 === 0) {
+            const blankPage: PageLayout = {
+              pageIndex: pages.length,
+              pageNumber: currentLogicalPageNumber++,
+              orientation,
+              size: { ...pageSize },
+              margins: { ...margins },
+              lines: [],
+            };
+            pages.push(blankPage);
+            pageMetas.push({ page: blankPage, section, sectionPageIndex: -1 });
+          }
+        } else if (breakType === 'oddPage') {
+          // Must start on odd physical page (pageIndex % 2 === 0)
+          if (pages.length % 2 === 1) {
+            const blankPage: PageLayout = {
+              pageIndex: pages.length,
+              pageNumber: currentLogicalPageNumber++,
+              orientation,
+              size: { ...pageSize },
+              margins: { ...margins },
+              lines: [],
+            };
+            pages.push(blankPage);
+            pageMetas.push({ page: blankPage, section, sectionPageIndex: -1 });
+          }
+        } else if (breakType === 'continuous' && pages.length > 0) {
+          const prevPage = pages[pages.length - 1];
+          const prevMeta = pageMetas[pageMetas.length - 1];
+          if (
+            prevPage &&
+            prevMeta &&
+            prevPage.size.width === pageSize.width &&
+            prevPage.size.height === pageSize.height &&
+            prevPage.margins.top === margins.top &&
+            prevPage.margins.bottom === margins.bottom
+          ) {
+            let maxBottom = margins.top;
+            for (const l of prevPage.lines) {
+              maxBottom = Math.max(maxBottom, l.bounds.y + l.bounds.height);
+            }
+            const usedHeight = maxBottom - margins.top;
+            if (usedHeight < contentHeight - 20) {
+              pages.pop();
+              pageMetas.pop();
+              resumedPage = prevPage;
+              resumedMeta = prevMeta;
+              resumedUsedHeight = usedHeight;
+            }
+          }
+        }
+      }
 
       // Multi-column setup (w:cols)
       const columnsProp = section.properties.columns;
@@ -74,15 +201,28 @@ export class StandardPageEngine implements PageEngine {
       let currentColumnIndex = 0;
       let currentY = 0; // vertical position inside content box (0 to contentHeight)
 
+      if (resumedPage) {
+        currentPageIndex = resumedPage.pageIndex;
+        sectionPageIndex = resumedMeta ? resumedMeta.sectionPageIndex : 0;
+        currentLines = [...resumedPage.lines];
+        currentY = resumedUsedHeight + 12;
+        currentLogicalPageNumber = resumedPage.pageNumber;
+      }
+
       const emitPage = (): void => {
+        const fmtPageNum = formatPageNumber(currentLogicalPageNumber, currentNumberingFormat);
         const page: PageLayout = {
           pageIndex: currentPageIndex,
+          pageNumber: currentLogicalPageNumber,
+          formattedPageNumber: fmtPageNum,
+          orientation,
           size: { ...pageSize },
           margins: { ...margins },
           lines: currentLines,
         };
         pages.push(page);
         pageMetas.push({ page, section, sectionPageIndex });
+        currentLogicalPageNumber++;
         sectionPageIndex++;
         currentPageIndex++;
         currentLines = [];
@@ -226,7 +366,9 @@ export class StandardPageEngine implements PageEngine {
     const totalPages = pages.length;
     for (const meta of pageMetas) {
       const { page, section, sectionPageIndex } = meta;
+      page.totalPageCount = totalPages;
       const contentWidth = Math.max(50, page.size.width - page.margins.left - page.margins.right);
+      const pageNumStr = page.formattedPageNumber ?? String(page.pageNumber);
 
       // 1. Resolve header
       let headerNode: HeaderFooterNode | undefined;
@@ -240,7 +382,7 @@ export class StandardPageEngine implements PageEngine {
 
       if (headerNode) {
         const headerDist = section.properties.headerDistancePt ?? 36;
-        page.headerLines = this.layoutHeaderFooter(headerNode, contentWidth, headerDist, page.margins, page.pageIndex, totalPages);
+        page.headerLines = this.layoutHeaderFooter(headerNode, contentWidth, headerDist, page.margins, pageNumStr, totalPages);
       }
 
       // 2. Resolve footer
@@ -256,7 +398,7 @@ export class StandardPageEngine implements PageEngine {
       if (footerNode) {
         const footerDist = section.properties.footerDistancePt ?? 36;
         const footerY = page.size.height - footerDist - 16;
-        page.footerLines = this.layoutHeaderFooter(footerNode, contentWidth, footerY, page.margins, page.pageIndex, totalPages);
+        page.footerLines = this.layoutHeaderFooter(footerNode, contentWidth, footerY, page.margins, pageNumStr, totalPages);
       }
 
       // 3. Resolve footnotes referenced on this page
@@ -325,7 +467,7 @@ export class StandardPageEngine implements PageEngine {
     contentWidth: number,
     baseY: number,
     margins: Margins,
-    pageIndex: number,
+    pageNumStr: string,
     totalPages: number,
   ): LayoutLine[] {
     const lines: LayoutLine[] = [];
@@ -333,7 +475,7 @@ export class StandardPageEngine implements PageEngine {
 
     for (const block of node.children) {
       if (block.type === 'paragraph') {
-        const resolvedParagraph = this.resolveFields(block, pageIndex, totalPages);
+        const resolvedParagraph = this.resolveFields(block, pageNumStr, totalPages);
         const pLines = this.lineBreaker.breakParagraph(resolvedParagraph, contentWidth);
         for (const line of pLines) {
           lines.push({
@@ -354,8 +496,7 @@ export class StandardPageEngine implements PageEngine {
     return lines;
   }
 
-  private resolveFields(p: ParagraphNode, pageIndex: number, totalPages: number): ParagraphNode {
-    const pageNumStr = String(pageIndex + 1);
+  private resolveFields(p: ParagraphNode, pageNumStr: string, totalPages: number): ParagraphNode {
     const totalPagesStr = String(totalPages);
 
     const newChildren = p.children.map((run) => {

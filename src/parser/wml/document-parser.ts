@@ -112,8 +112,29 @@ export function parseSectionProperties(node?: XmlNode): SectionProperties {
     if (tag === 'pgsz') {
       const w = child.attributes['w:w'] ?? child.attributes['w'];
       const h = child.attributes['w:h'] ?? child.attributes['h'];
+      const orient = (child.attributes['w:orient'] ?? child.attributes['orient'])?.toLowerCase();
       if (w) props.pageSize.width = twipsToPt(Number(w));
       if (h) props.pageSize.height = twipsToPt(Number(h));
+      if (orient === 'landscape' || orient === 'portrait') {
+        props.orientation = orient;
+      }
+    } else if (tag === 'type') {
+      const val = child.attributes['w:val'] ?? child.attributes['val'];
+      if (val) {
+        const lower = val.toLowerCase();
+        if (lower === 'continuous') props.type = 'continuous';
+        else if (lower === 'nextpage') props.type = 'nextPage';
+        else if (lower === 'evenpage') props.type = 'evenPage';
+        else if (lower === 'oddpage') props.type = 'oddPage';
+        else if (lower === 'nextcolumn') props.type = 'nextColumn';
+      }
+    } else if (tag === 'pgnumtype') {
+      const start = child.attributes['w:start'] ?? child.attributes['start'];
+      const fmt = child.attributes['w:fmt'] ?? child.attributes['fmt'];
+      props.pageNumbering = {
+        start: start ? Number(start) : undefined,
+        format: fmt,
+      };
     } else if (tag === 'pgmar') {
       const top = child.attributes['w:top'] ?? child.attributes['top'];
       const right = child.attributes['w:right'] ?? child.attributes['right'];

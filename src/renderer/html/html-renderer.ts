@@ -175,7 +175,19 @@ export class StandardHtmlRenderer implements HtmlRenderer {
       }
     }
 
+    if (section.properties.type === 'continuous') {
+      styleObj['break-before'] = 'auto';
+    } else if (section.properties.type) {
+      styleObj['break-before'] = 'page';
+    }
+
+    if (section.properties.orientation) {
+      styleObj['page-orientation'] = section.properties.orientation;
+    }
+
     const styleStr = this.styleMapper.toCssString(styleObj);
+    const orientAttr = section.properties.orientation ? ` data-orientation="${section.properties.orientation}"` : '';
+    const typeAttr = section.properties.type ? ` data-break-type="${section.properties.type}"` : '';
 
     let headerHtml = '';
     const defaultHeader = section.headers?.default ?? section.headers?.first;
@@ -199,7 +211,7 @@ export class StandardHtmlRenderer implements HtmlRenderer {
       footerHtml = `\n    <footer class="ooxen-footer">\n${footerBlocks}\n    </footer>`;
     }
 
-    return `  <section class="ooxen-section" style="${escapeXml(styleStr)}">\n${headerHtml}${childrenHtml}${footerHtml}\n  </section>`;
+    return `  <section class="ooxen-section"${orientAttr}${typeAttr} style="${escapeXml(styleStr)}">\n${headerHtml}${childrenHtml}${footerHtml}\n  </section>`;
   }
 
   private renderBlock(block: BlockNode): string {

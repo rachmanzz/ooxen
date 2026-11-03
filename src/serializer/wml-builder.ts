@@ -829,10 +829,25 @@ export class StandardWmlBuilder implements WmlBuilder {
       ? `${indent}  <w:titlePg/>`
       : '';
 
+    const orientAttr = section.properties.orientation ? ` w:orient="${section.properties.orientation}"` : '';
+    const typeXml = section.properties.type ? `${indent}  <w:type w:val="${section.properties.type}"/>` : '';
+
+    let pgNumTypeXml = '';
+    if (section.properties.pageNumbering) {
+      const startAttr =
+        section.properties.pageNumbering.start !== undefined ? ` w:start="${section.properties.pageNumbering.start}"` : '';
+      const fmtAttr = section.properties.pageNumbering.format ? ` w:fmt="${section.properties.pageNumbering.format}"` : '';
+      if (startAttr || fmtAttr) {
+        pgNumTypeXml = `${indent}  <w:pgNumType${startAttr}${fmtAttr}/>`;
+      }
+    }
+
     return [
       `${indent}<w:sectPr>`,
       ...refs,
-      `${indent}  <w:pgSz w:w="${wTwips}" w:h="${hTwips}"/>`,
+      typeXml,
+      pgNumTypeXml,
+      `${indent}  <w:pgSz w:w="${wTwips}" w:h="${hTwips}"${orientAttr}/>`,
       `${indent}  <w:pgMar w:top="${topTwips}" w:right="${rightTwips}" w:bottom="${bottomTwips}" w:left="${leftTwips}" w:header="${headerTwips}" w:footer="${footerTwips}"/>`,
       colsXml,
       titlePgXml,

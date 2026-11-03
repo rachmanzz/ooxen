@@ -169,6 +169,14 @@ export interface SectionColumns {
   columns?: ColumnProperties[]; // explicit column definitions when not equal width
 }
 
+export type SectionBreakType = 'continuous' | 'nextPage' | 'evenPage' | 'oddPage' | 'nextColumn';
+export type PageOrientation = 'portrait' | 'landscape';
+
+export interface PageNumberingProperties {
+  start?: number; // Starting page number (w:start)
+  format?: string; // Numbering format e.g. 'decimal' | 'upperRoman' | 'lowerRoman' | 'upperLetter' | 'lowerLetter' (w:fmt)
+}
+
 export interface SectionProperties {
   pageSize: Size; // points
   margins: Margins; // points
@@ -176,6 +184,9 @@ export interface SectionProperties {
   footerDistancePt?: number; // distance from bottom of page to footer (default: 36 pt / 720 twips)
   titlePg?: boolean; // whether first page has different header/footer
   columns?: SectionColumns;
+  type?: SectionBreakType;
+  orientation?: PageOrientation;
+  pageNumbering?: PageNumberingProperties;
 }
 
 export interface SectionNode extends BaseASTNode {
