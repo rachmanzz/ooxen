@@ -18,6 +18,7 @@ export * from './opc/zip/zip-writer.js';
 
 // Parser (ISO/IEC 29500-1)
 export * from './parser/namespaces.js';
+export * from './parser/mce.js';
 export * from './parser/xml-adapter.js';
 export * from './parser/wml/document-parser.js';
 export * from './parser/wml/paragraph-parser.js';

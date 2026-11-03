@@ -18,6 +18,7 @@ import { loadEmbeddedFonts } from '../../fonts/font-table-loader.js';
 import { KNOWN_RELATIONSHIPS } from '../../opc/relationships.js';
 import { parsePackageMetadata } from '../metadata/metadata-parser.js';
 import { defaultXmlAdapter, type XmlNode } from '../xml-adapter.js';
+import { parseWithMarkupCompatibility } from '../mce.js';
 import type { ImageResolver } from '../dml/image-parser.js';
 import { parseCommentsXml } from './comment-parser.js';
 import { parseEndnotesXml, parseFootnotesXml } from './footnote-parser.js';
@@ -225,7 +226,7 @@ export class StandardDocumentParser implements DocumentParser {
     endnotes?: FootnoteNode[],
     comments?: CommentNode[],
   ): DocumentNode {
-    const rootNode = defaultXmlAdapter.parse(xmlString);
+    const rootNode = parseWithMarkupCompatibility(xmlString, (xml) => defaultXmlAdapter.parse(xml));
     return this.parseDocument(
       rootNode,
       styleResolver,
@@ -374,7 +375,7 @@ export class StandardDocumentParser implements DocumentParser {
     const stylesPartPath = resolveWordPartPath(stylesRel?.target, 'word/styles.xml');
     const stylesPart = pkg.getPart(stylesPartPath);
     if (stylesPart) {
-      const stylesXml = defaultXmlAdapter.parse(textDecoder.decode(stylesPart.data));
+      const stylesXml = parseWithMarkupCompatibility(textDecoder.decode(stylesPart.data), (xml) => defaultXmlAdapter.parse(xml));
       const resolver = new StandardStyleResolver();
       resolver.loadStyles(stylesXml);
       styleResolver = resolver;
@@ -386,7 +387,7 @@ export class StandardDocumentParser implements DocumentParser {
     const numPartPath = resolveWordPartPath(numRel?.target, 'word/numbering.xml');
     const numPart = pkg.getPart(numPartPath);
     if (numPart) {
-      const numXml = defaultXmlAdapter.parse(textDecoder.decode(numPart.data));
+      const numXml = parseWithMarkupCompatibility(textDecoder.decode(numPart.data), (xml) => defaultXmlAdapter.parse(xml));
       const resolver = new StandardNumberingResolver();
       resolver.parseNumberingXml(numXml);
       numberingResolver = resolver;
@@ -419,7 +420,7 @@ export class StandardDocumentParser implements DocumentParser {
         const hPath = rel.target.startsWith('word/') ? rel.target : `word/${rel.target.replace(/^\/+/, '')}`;
         const hPart = pkg.getPart(hPath);
         if (hPart) {
-          const hXml = defaultXmlAdapter.parse(textDecoder.decode(hPart.data));
+          const hXml = parseWithMarkupCompatibility(textDecoder.decode(hPart.data), (xml) => defaultXmlAdapter.parse(xml));
           const hNode = parseHeaderFooterNode(hXml, 'default', styleResolver, numberingResolver, imageResolver);
           headerMap.set(rel.id, hNode);
         }
@@ -427,7 +428,7 @@ export class StandardDocumentParser implements DocumentParser {
         const fPath = rel.target.startsWith('word/') ? rel.target : `word/${rel.target.replace(/^\/+/, '')}`;
         const fPart = pkg.getPart(fPath);
         if (fPart) {
-          const fXml = defaultXmlAdapter.parse(textDecoder.decode(fPart.data));
+          const fXml = parseWithMarkupCompatibility(textDecoder.decode(fPart.data), (xml) => defaultXmlAdapter.parse(xml));
           const fNode = parseHeaderFooterNode(fXml, 'default', styleResolver, numberingResolver, imageResolver);
           footerMap.set(rel.id, fNode);
         }
@@ -497,7 +498,7 @@ export class StandardDocumentParser implements DocumentParser {
     const metadata = parsePackageMetadata(pkg);
 
     // 10. Parse document XML
-    const rootNode = defaultXmlAdapter.parse(textDecoder.decode(docPart.data));
+    const rootNode = parseWithMarkupCompatibility(textDecoder.decode(docPart.data), (xml) => defaultXmlAdapter.parse(xml));
     return this.parseDocument(
       rootNode,
       styleResolver,
