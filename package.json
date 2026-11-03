@@ -20,13 +20,12 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "typecheck:tests": "tsc --noEmit -p tsconfig.test.json",
     "test": "bun test"
   },
   "keywords": [
     "ooxml",
     "docx",
-    "xlsx",
-    "pptx",
     "renderer",
     "canvas",
     "html",
@@ -36,5 +35,10 @@
   "license": "Apache-2.0",
   "dependencies": {
     "fflate": "^0.8.3"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "@types/bun": "^1.4.4",
+    "@types/node": "^26.6.6"
   }
 }
