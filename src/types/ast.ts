@@ -85,6 +85,17 @@ export interface RevisionInfo {
   date?: string;
 }
 
+/**
+ * Exact ordered run content, preserving the original interleaving of text,
+ * tabs, and breaks (futures §5.1 — position-aware parsing). When present,
+ * the writer serializes from segments instead of re-deriving structure from
+ * the flattened `text` heuristic.
+ */
+export type RunSegment =
+  | { type: 'text'; text: string }
+  | { type: 'tab' }
+  | { type: 'break'; breakType?: 'line' | 'page' | 'column' };
+
 export interface RunNode extends BaseASTNode {
   type: 'run';
   text: string;
@@ -100,6 +111,7 @@ export interface RunNode extends BaseASTNode {
   breakType?: 'page' | 'column';
   revision?: RevisionInfo;
   isTab?: boolean;
+  segments?: RunSegment[];
 }
 
 export interface ParagraphNode extends BaseASTNode {

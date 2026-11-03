@@ -428,7 +428,13 @@ export class StandardWmlBuilder implements WmlBuilder {
       const attrs: string[] = [];
       if (style.indentLeftPt !== undefined) attrs.push(`w:left="${Math.round(ptToTwips(style.indentLeftPt))}"`);
       if (style.indentRightPt !== undefined) attrs.push(`w:right="${Math.round(ptToTwips(style.indentRightPt))}"`);
-      if (style.firstLineIndentPt !== undefined) attrs.push(`w:firstLine="${Math.round(ptToTwips(style.firstLineIndentPt))}"`);
+      if (style.firstLineIndentPt !== undefined) {
+        // ISO/IEC 29500-1: ST_TwipsMeasure is unsigned — a hanging indent is
+        // expressed as w:hanging (positive), never a negative w:firstLine.
+        const firstLineTwips = Math.round(ptToTwips(style.firstLineIndentPt));
+        if (firstLineTwips < 0) attrs.push(`w:hanging="${-firstLineTwips}"`);
+        else attrs.push(`w:firstLine="${firstLineTwips}"`);
+      }
       inner.push(`      <w:ind ${attrs.join(' ')}/>`);
     }
 
@@ -444,26 +450,50 @@ export class StandardWmlBuilder implements WmlBuilder {
   private serializeRun(r: RunNode): string {
     const rPr = this.serializeRunProperties(r.style);
     const textPieces: string[] = [];
-
-    // Split text by newlines into text and breaks, and by tabs into text and w:tab
-    const parts = r.text.split('\n');
     const textTag = r.revision?.type === 'delete' ? 'w:delText' : 'w:t';
-    for (let i = 0; i < parts.length; i++) {
-      const text = parts[i]!;
-      const tabParts = text.split('\t');
-      for (let t = 0; t < tabParts.length; t++) {
-        const subText = tabParts[t]!;
-        if (subText.length > 0) {
-          const needsPreserve = subText.startsWith(' ') || subText.endsWith(' ') || subText.includes('  ');
+
+    // When exact content segments are available (parsed documents), serialize
+    // from them so the original interleaving of text/tab/break is preserved
+    // byte-for-byte (futures §5.1). Otherwise derive structure from the
+    // flattened text heuristic.
+    if (r.segments && r.segments.length > 0) {
+      for (const segment of r.segments) {
+        if (segment.type === 'text') {
+          const needsPreserve = segment.text.startsWith(' ') || segment.text.endsWith(' ') || segment.text.includes('  ');
           const preserveAttr = needsPreserve ? ' xml:space="preserve"' : '';
-          textPieces.push(`      <${textTag}${preserveAttr}>${escapeXml(subText)}</${textTag}>`);
-        }
-        if (t < tabParts.length - 1) {
+          textPieces.push(`      <${textTag}${preserveAttr}>${escapeXml(segment.text)}</${textTag}>`);
+        } else if (segment.type === 'tab') {
           textPieces.push('      <w:tab/>');
+        } else {
+          textPieces.push(
+            segment.breakType === 'page'
+              ? '      <w:br w:type="page"/>'
+              : segment.breakType === 'column'
+                ? '      <w:br w:type="column"/>'
+                : '      <w:br/>',
+          );
         }
       }
-      if (i < parts.length - 1) {
-        textPieces.push('      <w:br/>');
+    } else {
+      // Split text by newlines into text and breaks, and by tabs into text and w:tab
+      const parts = r.text.split('\n');
+      for (let i = 0; i < parts.length; i++) {
+        const text = parts[i]!;
+        const tabParts = text.split('\t');
+        for (let t = 0; t < tabParts.length; t++) {
+          const subText = tabParts[t]!;
+          if (subText.length > 0) {
+            const needsPreserve = subText.startsWith(' ') || subText.endsWith(' ') || subText.includes('  ');
+            const preserveAttr = needsPreserve ? ' xml:space="preserve"' : '';
+            textPieces.push(`      <${textTag}${preserveAttr}>${escapeXml(subText)}</${textTag}>`);
+          }
+          if (t < tabParts.length - 1) {
+            textPieces.push('      <w:tab/>');
+          }
+        }
+        if (i < parts.length - 1) {
+          textPieces.push('      <w:br/>');
+        }
       }
     }
 

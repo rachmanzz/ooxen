@@ -7,6 +7,7 @@ import type {
   RevisionInfo,
   RevisionType,
   RunNode,
+  RunSegment,
 } from '../../types/ast.js';
 import { parseImageNode, type ImageResolver } from '../dml/image-parser.js';
 import { parseDrawingNode } from '../dml/shape-parser.js';
@@ -248,8 +249,17 @@ export class StandardParagraphParser implements ParagraphParser {
     let commentId: string | undefined;
     let breakType: 'page' | 'column' | undefined;
     let isTab: boolean | undefined;
+    // Exact content segments preserve the original interleaving of text,
+    // tabs, and breaks (futures §5.1). Each w:t/delText element maps to its
+    // own text segment so sibling text elements survive round-trips.
+    const segments: RunSegment[] = [];
+    const pushTextSegment = (value: string) => {
+      if (value.length === 0) return;
+      segments.push({ type: 'text', text: value });
+    };
 
-    for (const child of node.children) {
+    for (const child of node.childNodes ?? node.children) {
+      if (child.kind && child.kind !== 'element') continue;
       const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
 
       if (tag === 'rpr') {
@@ -259,19 +269,28 @@ export class StandardParagraphParser implements ParagraphParser {
           rStyleId = rStyle.attributes['w:val'] ?? rStyle.attributes['val'];
         }
       } else if (tag === 't' || tag === 'deltext') {
-        text += child.textContent;
+        const value = child.textContent;
+        text += value;
+        pushTextSegment(value);
       } else if (tag === 'instrtext') {
         field = classifyFieldInstruction(child.textContent.trim().toUpperCase());
       } else if (tag === 'br') {
         const brType = (child.attributes['w:type'] ?? child.attributes['type'] ?? '').toLowerCase();
         if (brType === 'page' || brType === 'column') {
           breakType = brType;
+          segments.push({ type: 'break', breakType: brType });
         } else {
           text += '\n';
+          segments.push({ type: 'break', breakType: 'line' });
         }
+      } else if (tag === 'cr') {
+        // <w:cr/> is a soft line break equivalent to <w:br/> (textWrapping).
+        text += '\n';
+        segments.push({ type: 'break', breakType: 'line' });
       } else if (tag === 'tab') {
         text += '\t';
         isTab = true;
+        segments.push({ type: 'tab' });
       } else if (tag === 'footnotereference') {
         const idStr = child.attributes['w:id'] ?? child.attributes['id'];
         const id = idStr ? Number(idStr) : 1;
@@ -318,6 +337,7 @@ export class StandardParagraphParser implements ParagraphParser {
       commentId,
       breakType,
       isTab,
+      segments: segments.length > 1 || (segments.length === 1 && segments[0]!.type !== 'text') ? segments : undefined,
     };
   }
 }

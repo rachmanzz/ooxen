@@ -1,18 +1,54 @@
 /**
  * Isomorphic XML reader and DOM-like node interface.
  * Decoupled from browser global DOM or Node.js-only packages.
+ *
+ * Lossless design (futures §5.1): every parsed document keeps a typed
+ * `childNodes` list that preserves the exact document order of elements,
+ * text nodes (including whitespace-only ones), and comments. `children`
+ * remains an element-only view for backward compatibility with existing
+ * consumers, and `textContent` stays the folded convenience accessor.
+ * `serializeXmlNode` re-emits the tree so that
+ * `serialize(parse(serialize(parse(x)))) === serialize(parse(x))` — the XML
+ * infoset survives a parse/serialize cycle unchanged.
  */
 
+export type XmlNodeKind = 'element' | 'text' | 'comment';
+
 export interface XmlNode {
+  /** Discriminator for typed nodes. Absent (legacy) means 'element'. */
+  kind?: XmlNodeKind;
   nodeName: string;
   namespaceUri?: string;
   attributes: Record<string, string>;
+  /**
+   * Exact ordered child list: elements, text nodes, and comments. Only
+   * present on element nodes; text and comment nodes are leaves.
+   */
   children: XmlNode[];
+  /**
+   * Full ordered child list including text ('#text') and comment
+   * ('#comment') nodes — the lossless view. Absent on leaves.
+   */
+  childNodes?: XmlNode[];
+  /** Folded text of all descendant text nodes (document order). */
   textContent: string;
+  /** Raw value for text/comment nodes. */
+  value?: string;
 }
 
 export interface XmlAdapter {
   parse(xmlString: string): XmlNode;
+}
+
+export const TEXT_NODE_NAME = '#text';
+export const COMMENT_NODE_NAME = '#comment';
+
+export function isElementNode(node: XmlNode): boolean {
+  return (node.kind ?? 'element') === 'element';
+}
+
+export function isTextNode(node: XmlNode): boolean {
+  return node.kind === 'text';
 }
 
 function decodeXmlEntities(text: string): string {
@@ -22,6 +58,31 @@ function decodeXmlEntities(text: string): string {
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&amp;/g, '&');
+}
+
+function escapeXmlText(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function escapeXmlAttribute(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function createElementNode(nodeName: string, attributes: Record<string, string>): XmlNode {
+  return {
+    kind: 'element',
+    nodeName,
+    attributes,
+    children: [],
+    childNodes: [],
+    textContent: '',
+  };
+}
+
+function appendText(parent: XmlNode, value: string): void {
+  if (value.length === 0) return;
+  parent.childNodes!.push({ kind: 'text', nodeName: TEXT_NODE_NAME, attributes: Object.create(null), children: [], textContent: value, value });
+  parent.textContent += value;
 }
 
 function parseAttributes(attrString: string): Record<string, string> {
@@ -40,25 +101,51 @@ function parseAttributes(attrString: string): Record<string, string> {
   return attributes;
 }
 
+/**
+ * Serializes a parsed node tree back to XML with strict lossless semantics:
+ * pure structural concatenation — no added indentation or line breaks, so
+ * `serialize(parse(x))` reproduces the source infoset and a second
+ * parse/serialize cycle is byte-stable. Attribute order and document order
+ * of mixed content are preserved; text is escaped minimally; comments are
+ * re-emitted verbatim. The XML/DOCTYPE prolog is not part of the node tree —
+ * callers prepend their own declaration.
+ */
+export function serializeXmlNode(node: XmlNode): string {
+  if (node.kind === 'text') return escapeXmlText(node.value ?? '');
+  if (node.kind === 'comment') return `<!--${node.value ?? ''}-->`;
+
+  const attributeEntries = Object.entries(node.attributes);
+  const attrString = attributeEntries
+    .map(([key, value]) => ` ${key}="${escapeXmlAttribute(value)}"`)
+    .join('');
+  const childNodes = node.childNodes ?? node.children;
+
+  if (childNodes.length === 0) {
+    return `<${node.nodeName}${attrString}/>`;
+  }
+
+  return `<${node.nodeName}${attrString}>${childNodes.map((child) => serializeXmlNode(child)).join('')}</${node.nodeName}>`;
+}
+
 export class SimpleXmlAdapter implements XmlAdapter {
   parse(xmlString: string): XmlNode {
-    // Strip XML declarations, DOCTYPE DTD declarations, and comments.
-    // CDATA sections are inlined as escaped text *before* comment stripping
-    // so their content survives verbatim and cannot be eaten by the comment
-    // regex (v2 N13).
+    // Strip XML declarations and DOCTYPE DTD declarations. CDATA sections are
+    // inlined as escaped text *before* comment extraction so their content
+    // survives verbatim (v2 N13). Comments are preserved as typed
+    // '#comment' nodes so serialization stays lossless.
     let cleaned = xmlString
       .replace(/<\?xml[\s\S]*?\?>/g, '')
       .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, (_match, cdata: string) =>
         cdata.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       )
-      .replace(/<!--[\s\S]*?-->/g, '')
-      .replace(/<!DOCTYPE[\s\S]*?>/gi, '')
-      .trim();
+      .replace(/<!DOCTYPE[\s\S]*?>/gi, '');
 
     const root: XmlNode = {
+      kind: 'element',
       nodeName: '__root__',
       attributes: Object.create(null),
       children: [],
+      childNodes: [],
       textContent: '',
     };
 
@@ -66,7 +153,7 @@ export class SimpleXmlAdapter implements XmlAdapter {
     // The attribute section must tolerate '>' inside quoted values (legal in
     // well-formed XML): match either a complete quoted string or any
     // non-quote, non-'>' character (v2 N13).
-    const tagRegex = /<(\/)?([a-zA-Z0-9_:-]+)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/)?>|([^<]+)/g;
+    const tagRegex = /<(\/)?([a-zA-Z0-9_:-]+)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/)?>|([^<]+)|<!--([\s\S]*?)-->/g;
     let match: RegExpExecArray | null;
 
     while ((match = tagRegex.exec(cleaned)) !== null) {
@@ -75,15 +162,23 @@ export class SimpleXmlAdapter implements XmlAdapter {
       const rawAttrs = match[3] ?? '';
       const isSelfClosing = Boolean(match[4]);
       const text = match[5];
+      const comment = match[6];
 
       const currentParent = stack[stack.length - 1];
       if (!currentParent) continue;
 
-      if (text) {
-        const trimmed = decodeXmlEntities(text);
-        if (trimmed.length > 0) {
-          currentParent.textContent += trimmed;
-        }
+      if (comment !== undefined) {
+        currentParent.childNodes!.push({
+          kind: 'comment',
+          nodeName: COMMENT_NODE_NAME,
+          attributes: Object.create(null),
+          children: [],
+          textContent: comment,
+          value: comment,
+        });
+      } else if (text !== undefined) {
+        const decoded = decodeXmlEntities(text);
+        appendText(currentParent, decoded);
       } else if (tagName) {
         if (isClosing) {
           if (stack.length > 1 && stack[stack.length - 1]?.nodeName === tagName) {
@@ -91,14 +186,9 @@ export class SimpleXmlAdapter implements XmlAdapter {
           }
         } else {
           const attributes = parseAttributes(rawAttrs);
-          const newNode: XmlNode = {
-            nodeName: tagName,
-            attributes,
-            children: [],
-            textContent: '',
-          };
-
+          const newNode = createElementNode(tagName, attributes);
           currentParent.children.push(newNode);
+          currentParent.childNodes!.push(newNode);
 
           if (!isSelfClosing) {
             stack.push(newNode);
