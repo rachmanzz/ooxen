@@ -102,6 +102,12 @@ const doc: DocumentNode = {
             {
               type: 'table-row',
               children: [
+                { type: 'table-cell', colSpan: 2, style: { verticalAlign: 'center' }, children: [{ type: 'paragraph', children: [{ type: 'run', text: 'Spanning header', style: { bold: true } }] }] },
+              ],
+            },
+            {
+              type: 'table-row',
+              children: [
                 { type: 'table-cell', children: [{ type: 'paragraph', children: [{ type: 'run', text: 'Cell A', style: { bold: true } }] }] },
                 { type: 'table-cell', style: { backgroundColor: '#EEEEEE' }, children: [{ type: 'paragraph', children: [{ type: 'run', text: 'Cell B' }] }] },
               ],
@@ -125,7 +131,47 @@ const doc: DocumentNode = {
         },
         {
           type: 'paragraph',
+          style: {
+            alignment: 'justify',
+            indentLeftPt: 36,
+            indentRightPt: 18,
+            firstLineIndentPt: 24,
+            spaceBeforePt: 6,
+            lineSpacingPt: 15,
+            tabStops: [{ positionPt: 144, alignment: 'center', leader: 'dot' }],
+            keepNext: true,
+            keepLines: true,
+          },
+          children: [
+            { type: 'run', text: 'Justified paragraph with indents', style: {} },
+            { type: 'run', text: '\tafter tab', style: {} },
+          ],
+        },
+        {
+          type: 'paragraph',
+          style: { pageBreakBefore: true },
+          children: [{ type: 'run', text: 'After page break.', style: {} }],
+        },
+        {
+          type: 'paragraph',
+          children: [{ type: 'run', text: 'Paragraph with endnote.', footnoteRef: { id: 1, kind: 'endnote' } }],
+        },
+        {
+          type: 'paragraph',
           children: [{ type: 'run', text: 'Link to ', style: {} }, { type: 'run', text: 'Example', style: { color: '#0563C1', underline: true }, hyperlink: { url: 'https://example.com' } }],
+        },
+      ],
+    },
+    {
+      type: 'section',
+      properties: {
+        pageSize: { width: 612, height: 792 },
+        margins: { top: 72, right: 72, bottom: 72, left: 72 },
+      },
+      children: [
+        {
+          type: 'paragraph',
+          children: [{ type: 'run', text: 'Second section content.', style: {} }],
         },
       ],
     },
@@ -136,6 +182,14 @@ const doc: DocumentNode = {
       id: 1,
       kind: 'footnote',
       children: [{ type: 'paragraph', children: [{ type: 'run', text: 'Footnote body text.' }] }],
+    },
+  ],
+  endnotes: [
+    {
+      type: 'endnote',
+      id: 1,
+      kind: 'endnote',
+      children: [{ type: 'paragraph', children: [{ type: 'run', text: 'Endnote body text.' }] }],
     },
   ],
   comments: [
