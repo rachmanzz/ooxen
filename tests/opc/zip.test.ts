@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { unzipSync } from 'fflate';
 import { FflateZipReader } from '../../src/opc/zip/zip-reader.js';
 import { FflateZipWriter } from '../../src/opc/zip/zip-writer.js';
 
@@ -51,5 +52,24 @@ describe('OPC Zip Adapter', () => {
     expect(entries.has('word/../../traversal.txt')).toBe(false);
     expect(entries.has('word/./current.txt')).toBe(false);
     expect(entries.has('word//double-slash.txt')).toBe(false);
+  });
+
+  it('should drop traversal entries at the writer, not just the reader (F-ZIPSLIP)', async () => {
+    const writer = new FflateZipWriter();
+    const encoder = new TextEncoder();
+
+    writer.addEntry('../../etc/passwd', encoder.encode('root:x:0:0'));
+    writer.addEntry('word/../../traversal.txt', encoder.encode('malicious'));
+    writer.addEntry('word/./current.txt', encoder.encode('dot-segment'));
+    writer.addEntry('word//double-slash.txt', encoder.encode('empty-segment'));
+    writer.addEntry('/absolute.txt', encoder.encode('absolute'));
+    writer.addEntry('word/valid.xml', encoder.encode('<valid/>'));
+
+    // Inspect the raw archive: nothing with dot/dotdot/empty segments may
+    // be emitted, even for readers without the traversal guard.
+    const raw = unzipSync(await writer.generate());
+    const names = Object.keys(raw);
+    // A leading slash is normalized to a relative name (same as the reader).
+    expect(names).toEqual(['absolute.txt', 'word/valid.xml']);
   });
 });

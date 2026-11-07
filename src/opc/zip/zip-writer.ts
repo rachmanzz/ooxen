@@ -16,7 +16,11 @@ export class FflateZipWriter implements ZipWriter {
 
   addEntry(path: string, data: Uint8Array): void {
     const normalizedPath = path.replace(/\\/g, '/').replace(/^\/+/, '');
-    if (!normalizedPath) return;
+    if (!normalizedPath || normalizedPath.endsWith('/')) return;
+    // Defense in depth (F-ZIPSLIP): reject dot segments at the entry point,
+    // mirroring the reader guard, so no consumer can emit a traversal.
+    const segments = normalizedPath.split('/');
+    if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) return;
     this.entries[normalizedPath] = data;
   }
 

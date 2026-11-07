@@ -27,6 +27,13 @@ export interface ParsedFontMetrics {
   familyName?: string;
   /** Advance width in font units for a character, or undefined when unmapped. */
   advanceOf(char: string): number | undefined;
+  /**
+   * True when a usable Unicode cmap subtable (format 4) was parsed.
+   * False for fonts with only unsupported cmap formats — measurers must
+   * fall back to heuristic widths instead of summing silent zeros
+   * (F-TTFSILENT).
+   */
+  cmapPresent: boolean;
 }
 
 function readUint16(data: Uint8Array, offset: number): number {
@@ -65,6 +72,8 @@ class CmapFormat4 {
         return (charCode + readInt16(this.data, this.idDeltasOffset + seg * 2)) & 0xffff;
       }
       const glyphIndexAddr = idRangeOffsetAddr + idRangeOffset + (charCode - start) * 2;
+      // A corrupt idRangeOffset must miss the glyph, not read out-of-bounds.
+      if (glyphIndexAddr < 0 || glyphIndexAddr + 2 > this.data.length) return undefined;
       const glyphIndex = readUint16(this.data, glyphIndexAddr);
       if (glyphIndex === 0) return undefined;
       return (glyphIndex + readInt16(this.data, this.idDeltasOffset + seg * 2)) & 0xffff;
@@ -81,15 +90,21 @@ export function parseTtf(data: Uint8Array): ParsedFontMetrics {
   }
 
   const numTables = readUint16(data, 4);
+  if (12 + numTables * 16 > data.length) throw new Error('Invalid font: truncated table directory');
   const tables = new Map<string, { offset: number; length: number }>();
   for (let i = 0; i < numTables; i++) {
     const record = 12 + i * 16;
     const tag = String.fromCharCode(data[record]!, data[record + 1]!, data[record + 2]!, data[record + 3]!);
-    tables.set(tag, { offset: readUint32(data, record + 8), length: readUint32(data, record + 12) });
+    const offset = readUint32(data, record + 8);
+    const length = readUint32(data, record + 12);
+    // Truncated tables must throw here (the loader skips the face) rather
+    // than read out-of-bounds as zero downstream (F-TTFSILENT).
+    if (offset + length > data.length) throw new Error(`Invalid font: truncated ${tag} table`);
+    tables.set(tag, { offset, length });
   }
 
   const head = tables.get('head');
-  if (!head) throw new Error('Invalid font: missing head table');
+  if (!head || head.length < 20) throw new Error('Invalid font: missing head table');
   const unitsPerEm = readUint16(data, head.offset + 18);
   if (unitsPerEm === 0) throw new Error('Invalid font: unitsPerEm is zero');
 
@@ -97,26 +112,32 @@ export function parseTtf(data: Uint8Array): ParsedFontMetrics {
   const hmtx = tables.get('hmtx');
   const cmap = tables.get('cmap');
 
+  if (hhea && hhea.length < 36) throw new Error('Invalid font: truncated hhea table');
   const ascender = hhea ? readInt16(data, hhea.offset + 4) : Math.round(unitsPerEm * 0.8);
   const descender = hhea ? readInt16(data, hhea.offset + 6) : -Math.round(unitsPerEm * 0.2);
   const numberOfHMetrics = hhea ? readUint16(data, hhea.offset + 34) : 0;
+  if (hmtx && hmtx.length < numberOfHMetrics * 4) throw new Error('Invalid font: truncated hmtx table');
 
   const os2 = tables.get('OS/2');
-  const weightClass = os2 ? readUint16(data, os2.offset + 4) : undefined;
+  const weightClass = os2 && os2.length >= 6 ? readUint16(data, os2.offset + 4) : undefined;
 
   const familyName = readFamilyName(data, tables.get('name')?.offset);
 
   // Locate the best Unicode cmap subtable: Windows Unicode BMP (3/1) first,
-  // then any platform-0 subtable.
+  // then any platform-0 subtable. Only format 4 is interpreted; anything
+  // else leaves cmapTable unset and cmapPresent false so measurers fall
+  // back to heuristic widths instead of silent zeros (F-TTFSILENT).
   let cmapTable: CmapFormat4 | undefined;
-  if (cmap) {
+  if (cmap && cmap.length >= 4) {
+    const cmapEnd = cmap.offset + cmap.length;
     const subtableCount = readUint16(data, cmap.offset + 2);
     let fallbackSubtable: number | undefined;
-    for (let i = 0; i < subtableCount; i++) {
+    for (let i = 0; i < subtableCount && cmap.offset + 4 + (i + 1) * 8 <= cmapEnd; i++) {
       const record = cmap.offset + 4 + i * 8;
       const platformId = readUint16(data, record);
       const encodingId = readUint16(data, record + 2);
       const subtableOffset = cmap.offset + readUint32(data, record + 4);
+      if (subtableOffset + 8 > cmapEnd) continue;
       if (platformId === 3 && (encodingId === 1 || encodingId === 10)) {
         fallbackSubtable = subtableOffset;
         if (encodingId === 1) break;
@@ -127,11 +148,16 @@ export function parseTtf(data: Uint8Array): ParsedFontMetrics {
     if (fallbackSubtable !== undefined && readUint16(data, fallbackSubtable) === 4) {
       const segCountX2 = readUint16(data, fallbackSubtable + 6);
       const segCount = segCountX2 / 2;
-      const endCodesOffset = fallbackSubtable + 14;
-      const startCodesOffset = endCodesOffset + segCountX2 + 2;
-      const idDeltasOffset = startCodesOffset + segCountX2;
-      const idRangeOffsetsOffset = idDeltasOffset + segCountX2;
-      cmapTable = new CmapFormat4(data, segCount, endCodesOffset, startCodesOffset, idDeltasOffset, idRangeOffsetsOffset);
+      // A format-4 body needs its 14-byte header plus four segCountX2
+      // arrays plus the reserved pad; anything shorter is corrupt, not empty.
+      const bodyEnd = fallbackSubtable + 14 + segCountX2 * 4 + 2;
+      if (Number.isInteger(segCount) && segCount > 0 && segCount <= 8192 && bodyEnd <= cmapEnd) {
+        const endCodesOffset = fallbackSubtable + 14;
+        const startCodesOffset = endCodesOffset + segCountX2 + 2;
+        const idDeltasOffset = startCodesOffset + segCountX2;
+        const idRangeOffsetsOffset = idDeltasOffset + segCountX2;
+        cmapTable = new CmapFormat4(data, segCount, endCodesOffset, startCodesOffset, idDeltasOffset, idRangeOffsetsOffset);
+      }
     }
   }
 
@@ -143,6 +169,7 @@ export function parseTtf(data: Uint8Array): ParsedFontMetrics {
     descender,
     weightClass,
     familyName,
+    cmapPresent: cmapTable !== undefined,
     advanceOf(char: string): number | undefined {
       const codePoint = char.codePointAt(0);
       if (codePoint === undefined) return undefined;
