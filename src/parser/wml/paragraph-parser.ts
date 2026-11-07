@@ -1,4 +1,5 @@
 import type {
+  BlockNode,
   DrawingShapeNode,
   FootnoteReference,
   HyperlinkInfo,
@@ -10,7 +11,7 @@ import type {
   RunSegment,
 } from '../../types/ast.js';
 import { parseImageNode, type ImageResolver } from '../dml/image-parser.js';
-import { parseDrawingNode } from '../dml/shape-parser.js';
+import { parseDrawingNode, parseTextboxBlocks } from '../dml/shape-parser.js';
 import type { XmlNode } from '../xml-adapter.js';
 import type { NumberingResolver } from './numbering-resolver.js';
 import { parseParagraphProperties, parseRunProperties, type StyleResolver } from './style-resolver.js';
@@ -59,10 +60,85 @@ export interface ParagraphParser {
     hyperlinkResolver?: HyperlinkResolver,
   ): ParagraphNode;
   parseRun(node: XmlNode, inheritedStyle?: StyleResolver, imageResolver?: ImageResolver): RunNode;
+  /**
+   * Drains shape-textbox paragraphs discovered while parsing the last
+   * paragraph. Callers that own a block list (document, header/footer,
+   * table cells) append these right after the parsed paragraph so
+   * floating textbox content renders in-flow instead of vanishing.
+   * Absent on parser implementations without textbox support.
+   */
+  drainPendingBlocks?(): BlockNode[];
 }
 
 export class StandardParagraphParser implements ParagraphParser {
+  private pendingBlocks: BlockNode[] = [];
+  private activeResolvers:
+    | {
+        styleResolver?: StyleResolver;
+        numberingResolver?: NumberingResolver;
+        hyperlinkResolver?: HyperlinkResolver;
+      }
+    | undefined;
+
+  drainPendingBlocks(): BlockNode[] {
+    const blocks = this.pendingBlocks;
+    this.pendingBlocks = [];
+    return blocks;
+  }
+
+  /**
+   * Extracts `wps:wsp` textbox paragraphs from a drawing node into the
+   * pending block queue, and returns them so the caller can also stash a
+   * copy on the parsed drawing node for `wps:txbx` round-trip (F-TXTBOX).
+   * The drained copy keeps rendering working until layout models
+   * shape text natively.
+   */
+  private collectTextboxBlocks(drawingNode: XmlNode, imageResolver?: ImageResolver): BlockNode[] | undefined {
+    const resolvers = this.activeResolvers;
+    if (!resolvers) return undefined;
+    const blocks = parseTextboxBlocks(
+      drawingNode,
+      this,
+      resolvers.styleResolver,
+      resolvers.numberingResolver,
+      imageResolver,
+      resolvers.hyperlinkResolver,
+    );
+    if (!blocks) return undefined;
+    this.pendingBlocks.push(...blocks);
+    return blocks;
+  }
+
+  /**
+   * Attaches drained textbox paragraphs back onto their shape so the
+   * writer can emit them inside `wps:txbx` (F-TXTBOX).
+   */
+  private attachTextboxParagraphs(shape: DrawingShapeNode, blocks: BlockNode[] | undefined): void {
+    if (!blocks) return;
+    const paras = blocks.filter((b): b is ParagraphNode => b.type === 'paragraph');
+    if (paras.length > 0) shape.textbox = paras;
+  }
+
   parseParagraph(
+    node: XmlNode,
+    styleResolver?: StyleResolver,
+    numberingResolver?: NumberingResolver,
+    imageResolver?: ImageResolver,
+    hyperlinkResolver?: HyperlinkResolver,
+  ): ParagraphNode {
+    // Stash resolvers so nested run parsing can extract shape textboxes
+    // (parseRun itself does not receive them). Save/restore so nested
+    // textbox paragraphs parsed below keep the outer call intact.
+    const prev = this.activeResolvers;
+    this.activeResolvers = { styleResolver, numberingResolver, hyperlinkResolver };
+    try {
+      return this.parseParagraphInner(node, styleResolver, numberingResolver, imageResolver, hyperlinkResolver);
+    } finally {
+      this.activeResolvers = prev;
+    }
+  }
+
+  private parseParagraphInner(
     node: XmlNode,
     styleResolver?: StyleResolver,
     numberingResolver?: NumberingResolver,
@@ -191,8 +267,13 @@ export class StandardParagraphParser implements ParagraphParser {
             bookmarkName: activeBookmark,
           });
         } else {
+          // Textbox shapes keep their drawing run (geometry renders) and
+          // stash their paragraphs for wps:txbx round-trip; the drained
+          // sibling copy keeps in-flow rendering working (F-TXTBOX).
+          const textboxBlocks = this.collectTextboxBlocks(child, imageResolver);
           const parsedDrawing = parseDrawingNode(child);
           if (parsedDrawing) {
+            this.attachTextboxParagraphs(parsedDrawing, textboxBlocks);
             runs.push({
               type: 'run',
               text: '',
@@ -313,8 +394,10 @@ export class StandardParagraphParser implements ParagraphParser {
         if (parsedImage) {
           image = parsedImage;
         } else {
+          const textboxBlocks = this.collectTextboxBlocks(child, imageResolver);
           const parsedDrawing = parseDrawingNode(child);
           if (parsedDrawing) {
+            this.attachTextboxParagraphs(parsedDrawing, textboxBlocks);
             drawing = parsedDrawing;
           }
         }

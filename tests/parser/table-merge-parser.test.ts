@@ -112,4 +112,44 @@ describe('Table Vertical Merging (w:vMerge) & Nested Tables Parser', () => {
     expect(innerTable.rows.length).toBe(1);
     expect(innerTable.rows[0]!.children.length).toBe(1);
   });
+
+  it('should inherit restart borders and shading into continuation cells (v2 N4 remainder)', () => {
+    const xml = `
+<w:tbl xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:tr>
+    <w:tc>
+      <w:tcPr>
+        <w:vMerge w:val="restart"/>
+        <w:shd w:fill="FF0000"/>
+        <w:tcBorders>
+          <w:top w:val="single" w:sz="8" w:color="000000"/>
+          <w:left w:val="single" w:sz="8" w:color="000000"/>
+          <w:right w:val="single" w:sz="8" w:color="000000"/>
+          <w:bottom w:val="single" w:sz="8" w:color="000000"/>
+        </w:tcBorders>
+      </w:tcPr>
+      <w:p><w:r><w:t>Top</w:t></w:r></w:p>
+    </w:tc>
+  </w:tr>
+  <w:tr>
+    <w:tc>
+      <w:tcPr>
+        <w:vMerge w:val="continue"/>
+      </w:tcPr>
+      <w:p/>
+    </w:tc>
+  </w:tr>
+</w:tbl>`;
+
+    const node = defaultXmlAdapter.parse(xml);
+    const table = new StandardTableParser().parseTable(node);
+
+    const cont = table.rows[1]!.children[0]!;
+    expect(cont.style?.backgroundColor).toBe('#FF0000');
+    expect(cont.style?.borderTop).toBeDefined();
+    expect(cont.style?.borderTop).toBe(table.rows[0]!.children[0]!.style?.borderTop);
+    expect(cont.style?.borderRight).toBe(table.rows[0]!.children[0]!.style?.borderRight);
+    expect(cont.style?.borderBottom).toBe(table.rows[0]!.children[0]!.style?.borderBottom);
+    expect(cont.style?.borderLeft).toBe(table.rows[0]!.children[0]!.style?.borderLeft);
+  });
 });

@@ -54,4 +54,30 @@ describe('ISO/IEC 29500 Section Properties Parser', () => {
     expect(props.pageNumbering?.start).toBe(5);
     expect(props.pageNumbering?.format).toBe('upperRoman');
   });
+
+  it('keeps finite defaults on malformed numeric attributes (F-NAN)', () => {
+    const xml = `
+<w:sectPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:pgSz w:w="garbage" w:h="Infinity" w:orient="landscape"/>
+  <w:pgMar w:top="abc" w:right="NaN" w:bottom="1440" w:left="1440" w:header="oops" w:footer="1440"/>
+  <w:pgNumType w:start="NaN" w:fmt="decimal"/>
+  <w:cols w:num="many" w:space="junk"><w:col w:w="bogus"/><w:col w:w="7200" w:space="bad"/></w:cols>
+</w:sectPr>`;
+
+    const props = parseSectionProperties(defaultXmlAdapter.parse(xml));
+
+    expect(props.pageSize.width).toBe(612);
+    expect(props.pageSize.height).toBe(792);
+    expect(props.orientation).toBe('landscape');
+    expect(props.margins.top).toBe(72);
+    expect(props.margins.right).toBe(72);
+    expect(props.margins.bottom).toBeCloseTo(72, 5);
+    expect(props.margins.left).toBeCloseTo(72, 5);
+    expect(props.pageNumbering?.start).toBeUndefined();
+    expect(props.columns?.count).toBe(1);
+    expect(props.columns?.spacePt).toBe(36);
+    expect(props.columns?.columns?.length).toBe(1);
+    expect(props.columns?.columns?.[0]?.widthPt).toBeCloseTo(360, 5);
+    expect(props.columns?.columns?.[0]?.spacePt).toBeUndefined();
+  });
 });

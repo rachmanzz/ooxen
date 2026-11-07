@@ -4,6 +4,7 @@ import type { TableCellStyle, TableStyle } from '../../types/style.js';
 import type { XmlNode } from '../xml-adapter.js';
 import type { NumberingResolver } from './numbering-resolver.js';
 import { defaultParagraphParser, type ParagraphParser } from './paragraph-parser.js';
+import { parseSdtContentBlocks } from './sdt-parser.js';
 import { formatBorderDef, parseTablePropertiesNode } from './table-properties.js';
 import type { StyleResolver } from './style-resolver.js';
 
@@ -129,11 +130,22 @@ export class StandardTableParser implements TableParser {
           if (originCell) {
             originCell.rowSpan = (originCell.rowSpan ?? 1) + 1;
             cell.rowSpan = 0;
-            // Vertically merged regions must paint their background across
-            // every covered row: continuation cells keep their own style but
-            // inherit the restart cell's shading when they have none (v2 N4).
-            if (originCell.style?.backgroundColor && !cell.style?.backgroundColor) {
-              cell.style = { ...cell.style, backgroundColor: originCell.style.backgroundColor };
+            // A vertically merged region renders with the restart cell's
+            // formatting across every covered row: continuation cells keep
+            // their own style but inherit shading AND borders they lack
+            // (v2 N4 remainder — borders previously did not propagate).
+            const originStyle = originCell.style;
+            if (originStyle && cell.style) {
+              if (originStyle.backgroundColor && !cell.style.backgroundColor) {
+                cell.style = { ...cell.style, backgroundColor: originStyle.backgroundColor };
+              }
+              for (const edge of ['borderTop', 'borderRight', 'borderBottom', 'borderLeft'] as const) {
+                if (originStyle[edge] && !cell.style[edge]) {
+                  cell.style = { ...cell.style, [edge]: originStyle[edge] };
+                }
+              }
+            } else if (originStyle && !cell.style) {
+              cell.style = { ...originStyle };
             }
           }
         } else {
@@ -165,8 +177,22 @@ export class StandardTableParser implements TableParser {
         vMerge = parsedPr.vMerge;
       } else if (tag === 'p') {
         children.push(this.paragraphParser.parseParagraph(child, styleResolver, numberingResolver));
+        children.push(...(this.paragraphParser.drainPendingBlocks?.() ?? []));
       } else if (tag === 'tbl') {
         children.push(this.parseTable(child, styleResolver, numberingResolver));
+      } else if (tag === 'sdt') {
+        // Content controls unwrap to their authored blocks (F-VMLSDT).
+        children.push(
+          ...parseSdtContentBlocks(
+            child,
+            styleResolver,
+            numberingResolver,
+            undefined,
+            undefined,
+            this.paragraphParser,
+            this,
+          ),
+        );
       }
     }
 

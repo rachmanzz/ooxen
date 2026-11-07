@@ -1,10 +1,12 @@
 import type { BlockNode, CommentNode } from '../../types/ast.js';
 import type { ImageResolver } from '../dml/image-parser.js';
+import { parseWithMarkupCompatibility } from '../mce.js';
 import { defaultXmlAdapter, type XmlAdapter } from '../xml-adapter.js';
 import type { NumberingResolver } from './numbering-resolver.js';
 import { defaultParagraphParser, type HyperlinkResolver, type ParagraphParser } from './paragraph-parser.js';
 import type { StyleResolver } from './style-resolver.js';
 import { defaultTableParser, type TableParser } from './table-parser.js';
+import { parseSdtContentBlocks } from './sdt-parser.js';
 
 /**
  * ISO/IEC 29500 WordprocessingML: Comments Parser (word/comments.xml).
@@ -38,7 +40,7 @@ export class StandardCommentParser implements CommentParser {
     paragraphParser: ParagraphParser = defaultParagraphParser,
     tableParser: TableParser = defaultTableParser,
   ): CommentNode[] {
-    const root = this.xmlAdapter.parse(xml);
+    const root = parseWithMarkupCompatibility(xml, (xmlString) => this.xmlAdapter.parse(xmlString));
     const comments: CommentNode[] = [];
 
     const commentNodes = root.children.filter((c) => c.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase() === 'comment');
@@ -54,8 +56,22 @@ export class StandardCommentParser implements CommentParser {
         const bTag = bChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
         if (bTag === 'p') {
           children.push(paragraphParser.parseParagraph(bChild, styleResolver, numberingResolver, imageResolver, hyperlinkResolver));
+          children.push(...(paragraphParser.drainPendingBlocks?.() ?? []));
         } else if (bTag === 'tbl') {
           children.push(tableParser.parseTable(bChild, styleResolver, numberingResolver));
+        } else if (bTag === 'sdt') {
+          // Content controls unwrap to their authored blocks (F-VMLSDT).
+          children.push(
+            ...parseSdtContentBlocks(
+              bChild,
+              styleResolver,
+              numberingResolver,
+              imageResolver,
+              hyperlinkResolver,
+              paragraphParser,
+              tableParser,
+            ),
+          );
         }
       }
 

@@ -1,10 +1,12 @@
 import type { BlockNode, FootnoteNode } from '../../types/ast.js';
 import type { ImageResolver } from '../dml/image-parser.js';
+import { parseWithMarkupCompatibility } from '../mce.js';
 import { defaultXmlAdapter, type XmlAdapter, type XmlNode } from '../xml-adapter.js';
 import type { NumberingResolver } from './numbering-resolver.js';
 import { defaultParagraphParser, type HyperlinkResolver, type ParagraphParser } from './paragraph-parser.js';
 import type { StyleResolver } from './style-resolver.js';
 import { defaultTableParser, type TableParser } from './table-parser.js';
+import { parseSdtContentBlocks } from './sdt-parser.js';
 
 /**
  * Footnote and Endnote resolver interface.
@@ -67,8 +69,22 @@ export function parseFootnotesNode(
           blocks.push(
             paragraphParser.parseParagraph(bChild, styleResolver, numberingResolver, imageResolver, hyperlinkResolver),
           );
+          blocks.push(...(paragraphParser.drainPendingBlocks?.() ?? []));
         } else if (bTag === 'tbl') {
           blocks.push(tableParser.parseTable(bChild, styleResolver, numberingResolver));
+        } else if (bTag === 'sdt') {
+          // Content controls unwrap to their authored blocks (F-VMLSDT).
+          blocks.push(
+            ...parseSdtContentBlocks(
+              bChild,
+              styleResolver,
+              numberingResolver,
+              imageResolver,
+              hyperlinkResolver,
+              paragraphParser,
+              tableParser,
+            ),
+          );
         }
       }
 
@@ -95,7 +111,7 @@ export function parseFootnotesXml(
   tableParser: TableParser = defaultTableParser,
   xmlAdapter: XmlAdapter = defaultXmlAdapter,
 ): FootnoteNode[] {
-  const rootNode = xmlAdapter.parse(xmlString);
+  const rootNode = parseWithMarkupCompatibility(xmlString, (xml) => xmlAdapter.parse(xml));
   return parseFootnotesNode(
     rootNode,
     styleResolver,
@@ -139,8 +155,22 @@ export function parseEndnotesNode(
           blocks.push(
             paragraphParser.parseParagraph(bChild, styleResolver, numberingResolver, imageResolver, hyperlinkResolver),
           );
+          blocks.push(...(paragraphParser.drainPendingBlocks?.() ?? []));
         } else if (bTag === 'tbl') {
           blocks.push(tableParser.parseTable(bChild, styleResolver, numberingResolver));
+        } else if (bTag === 'sdt') {
+          // Content controls unwrap to their authored blocks (F-VMLSDT).
+          blocks.push(
+            ...parseSdtContentBlocks(
+              bChild,
+              styleResolver,
+              numberingResolver,
+              imageResolver,
+              hyperlinkResolver,
+              paragraphParser,
+              tableParser,
+            ),
+          );
         }
       }
 
@@ -167,7 +197,7 @@ export function parseEndnotesXml(
   tableParser: TableParser = defaultTableParser,
   xmlAdapter: XmlAdapter = defaultXmlAdapter,
 ): FootnoteNode[] {
-  const rootNode = xmlAdapter.parse(xmlString);
+  const rootNode = parseWithMarkupCompatibility(xmlString, (xml) => xmlAdapter.parse(xml));
   return parseEndnotesNode(
     rootNode,
     styleResolver,

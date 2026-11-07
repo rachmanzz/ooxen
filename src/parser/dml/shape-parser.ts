@@ -1,5 +1,9 @@
-import type { DrawingShapeNode, VectorPathCommand } from '../../types/ast.js';
+import type { BlockNode, DrawingShapeNode, ParagraphNode, VectorPathCommand } from '../../types/ast.js';
 import type { XmlNode } from '../xml-adapter.js';
+import type { ImageResolver } from './image-parser.js';
+import type { NumberingResolver } from '../wml/numbering-resolver.js';
+import type { HyperlinkResolver, ParagraphParser } from '../wml/paragraph-parser.js';
+import type { StyleResolver } from '../wml/style-resolver.js';
 
 const EMU_PER_POINT = 12700;
 
@@ -447,4 +451,56 @@ export function parseDrawingNode(node: XmlNode): DrawingShapeNode | undefined {
   }
 
   return undefined;
+}
+
+/**
+ * Extracts WordProcessingShape textboxes (`wps:wsp` → `wps:txbx` →
+ * `w:txbxContent`) as ordinary paragraphs.
+ *
+ * Floating shapes are the standard Word construct for banners, journal
+ * headers, and callouts; without this their text silently vanishes from
+ * the AST (the MCE Choice branch legitimately wins over the raster
+ * Fallback, so the content must be honored, not dropped).
+ *
+ * Returns undefined when the drawing holds no textbox. Shape geometry and
+ * fill are intentionally not mapped yet — paragraphs render in-flow with
+ * their authored run formatting.
+ */
+export function parseTextboxBlocks(
+  node: XmlNode,
+  paragraphParser: ParagraphParser,
+  styleResolver?: StyleResolver,
+  numberingResolver?: NumberingResolver,
+  imageResolver?: ImageResolver,
+  hyperlinkResolver?: HyperlinkResolver,
+): BlockNode[] | undefined {
+  const rootTag = node.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+  if (rootTag !== 'drawing') return undefined;
+
+  const container = node.children.find((c) => {
+    const tag = c.nodeName.toLowerCase();
+    return tag.endsWith('inline') || tag.endsWith('anchor');
+  });
+  if (!container) return undefined;
+
+  const blocks: ParagraphNode[] = [];
+  for (const c of container.children) {
+    if (!c.nodeName.toLowerCase().endsWith('graphic')) continue;
+    const gData = c.children.find((gc) => gc.nodeName.toLowerCase().endsWith('graphicdata'));
+    if (!gData) continue;
+    const wsp = gData.children.find((wc) => wc.nodeName.toLowerCase().endsWith('wsp'));
+    if (!wsp) continue;
+    const txbx = wsp.children.find((wc) => wc.nodeName.toLowerCase().endsWith('txbx'));
+    if (!txbx) continue;
+    const content = txbx.children.find((tc) => tc.nodeName.toLowerCase().endsWith('txbxcontent'));
+    if (!content) continue;
+    for (const p of content.children) {
+      if (!p.nodeName.toLowerCase().endsWith('p')) continue;
+      blocks.push(
+        paragraphParser.parseParagraph(p, styleResolver, numberingResolver, imageResolver, hyperlinkResolver),
+      );
+    }
+  }
+
+  return blocks.length > 0 ? blocks : undefined;
 }

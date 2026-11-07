@@ -1,10 +1,12 @@
 import type { BlockNode, HeaderFooterNode, HeaderFooterType } from '../../types/ast.js';
 import type { ImageResolver } from '../dml/image-parser.js';
+import { parseWithMarkupCompatibility } from '../mce.js';
 import { defaultXmlAdapter, type XmlAdapter, type XmlNode } from '../xml-adapter.js';
 import type { NumberingResolver } from './numbering-resolver.js';
 import { defaultParagraphParser, type HyperlinkResolver, type ParagraphParser } from './paragraph-parser.js';
 import type { StyleResolver } from './style-resolver.js';
 import { defaultTableParser, type TableParser } from './table-parser.js';
+import { parseSdtContentBlocks } from './sdt-parser.js';
 
 /**
  * ISO/IEC 29500-1 WordprocessingML Header and Footer parser (w:hdr and w:ftr).
@@ -63,9 +65,24 @@ export function parseHeaderFooterNode(
         hyperlinkResolver,
       );
       children.push(paragraph);
+      // Floating shape textboxes surface as sibling blocks (see drainPendingBlocks).
+      children.push(...(paragraphParser.drainPendingBlocks?.() ?? []));
     } else if (tag === 'tbl') {
       const table = tableParser.parseTable(child, styleResolver, numberingResolver);
       children.push(table);
+    } else if (tag === 'sdt') {
+      // Content controls unwrap to their authored blocks (F-VMLSDT).
+      children.push(
+        ...parseSdtContentBlocks(
+          child,
+          styleResolver,
+          numberingResolver,
+          imageResolver,
+          hyperlinkResolver,
+          paragraphParser,
+          tableParser,
+        ),
+      );
     }
   }
 
@@ -87,7 +104,7 @@ export function parseHeaderFooterXml(
   tableParser: TableParser = defaultTableParser,
   xmlAdapter: XmlAdapter = defaultXmlAdapter,
 ): HeaderFooterNode {
-  const rootNode = xmlAdapter.parse(xmlString);
+  const rootNode = parseWithMarkupCompatibility(xmlString, (xml) => xmlAdapter.parse(xml));
   return parseHeaderFooterNode(
     rootNode,
     kind,

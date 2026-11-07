@@ -15,12 +15,13 @@ import type {
 import { twipsToPt } from '../../types/common.js';
 import { openPackage, type OpcPackage } from '../../opc/package.js';
 import { loadEmbeddedFonts } from '../../fonts/font-table-loader.js';
-import { KNOWN_RELATIONSHIPS } from '../../opc/relationships.js';
+import { KNOWN_RELATIONSHIPS, type OpcRelationship } from '../../opc/relationships.js';
 import { parsePackageMetadata } from '../metadata/metadata-parser.js';
 import { defaultXmlAdapter, type XmlNode } from '../xml-adapter.js';
 import { parseWithMarkupCompatibility } from '../mce.js';
 import type { ImageResolver } from '../dml/image-parser.js';
 import { parseCommentsXml } from './comment-parser.js';
+import { parseSdtContentBlocks } from './sdt-parser.js';
 import { parseEndnotesXml, parseFootnotesXml } from './footnote-parser.js';
 import { parseHeaderFooterNode, type HeaderFooterResolver } from './header-footer-parser.js';
 import { StandardNumberingResolver, type NumberingResolver } from './numbering-resolver.js';
@@ -99,6 +100,17 @@ export function parseSectionHeaderFooterReferences(
   };
 }
 
+/**
+ * Parses a twips attribute, keeping the current value when the input is
+ * missing or malformed (F-NAN): `Number('garbage')` is NaN, and NaN page
+ * geometry would poison every downstream layout computation.
+ */
+function finiteTwips(raw: string | undefined, current: number): number {
+  if (!raw) return current;
+  const value = twipsToPt(Number(raw));
+  return Number.isFinite(value) ? value : current;
+}
+
 export function parseSectionProperties(node?: XmlNode): SectionProperties {
   // Default Letter page: 8.5 x 11 inches = 612 x 792 pt, 1 inch margins = 72 pt
   const props: SectionProperties = {
@@ -115,8 +127,8 @@ export function parseSectionProperties(node?: XmlNode): SectionProperties {
       const w = child.attributes['w:w'] ?? child.attributes['w'];
       const h = child.attributes['w:h'] ?? child.attributes['h'];
       const orient = (child.attributes['w:orient'] ?? child.attributes['orient'])?.toLowerCase();
-      if (w) props.pageSize.width = twipsToPt(Number(w));
-      if (h) props.pageSize.height = twipsToPt(Number(h));
+      props.pageSize.width = finiteTwips(w, props.pageSize.width);
+      props.pageSize.height = finiteTwips(h, props.pageSize.height);
       if (orient === 'landscape' || orient === 'portrait') {
         props.orientation = orient;
       }
@@ -133,8 +145,9 @@ export function parseSectionProperties(node?: XmlNode): SectionProperties {
     } else if (tag === 'pgnumtype') {
       const start = child.attributes['w:start'] ?? child.attributes['start'];
       const fmt = child.attributes['w:fmt'] ?? child.attributes['fmt'];
+      const startNum = start ? Number(start) : undefined;
       props.pageNumbering = {
-        start: start ? Number(start) : undefined,
+        start: startNum !== undefined && Number.isFinite(startNum) ? startNum : undefined,
         format: fmt,
       };
     } else if (tag === 'pgmar') {
@@ -145,12 +158,12 @@ export function parseSectionProperties(node?: XmlNode): SectionProperties {
       const header = child.attributes['w:header'] ?? child.attributes['header'];
       const footer = child.attributes['w:footer'] ?? child.attributes['footer'];
 
-      if (top) props.margins.top = twipsToPt(Number(top));
-      if (right) props.margins.right = twipsToPt(Number(right));
-      if (bottom) props.margins.bottom = twipsToPt(Number(bottom));
-      if (left) props.margins.left = twipsToPt(Number(left));
-      if (header) props.headerDistancePt = twipsToPt(Number(header));
-      if (footer) props.footerDistancePt = twipsToPt(Number(footer));
+      props.margins.top = finiteTwips(top, props.margins.top);
+      props.margins.right = finiteTwips(right, props.margins.right);
+      props.margins.bottom = finiteTwips(bottom, props.margins.bottom);
+      props.margins.left = finiteTwips(left, props.margins.left);
+      props.headerDistancePt = header ? finiteTwips(header, props.headerDistancePt ?? 36) : props.headerDistancePt;
+      props.footerDistancePt = footer ? finiteTwips(footer, props.footerDistancePt ?? 36) : props.footerDistancePt;
     } else if (tag === 'titlepg') {
       props.titlePg = true;
     } else if (tag === 'cols') {
@@ -159,8 +172,9 @@ export function parseSectionProperties(node?: XmlNode): SectionProperties {
       const equalWidthAttr = child.attributes['w:equalWidth'] ?? child.attributes['equalWidth'];
       const sepAttr = child.attributes['w:sep'] ?? child.attributes['sep'];
 
-      const count = numAttr ? Number(numAttr) : 1;
-      const spacePt = spaceAttr ? twipsToPt(Number(spaceAttr)) : 36;
+      const countRaw = numAttr ? Number(numAttr) : 1;
+      const count = Number.isFinite(countRaw) ? countRaw : 1;
+      const spacePt = finiteTwips(spaceAttr, 36);
       const equalWidth = equalWidthAttr !== undefined ? !(equalWidthAttr === '0' || equalWidthAttr === 'false') : true;
       const separator = sepAttr === '1' || sepAttr === 'true';
 
@@ -171,10 +185,11 @@ export function parseSectionProperties(node?: XmlNode): SectionProperties {
           const colW = colChild.attributes['w:w'] ?? colChild.attributes['w'];
           const colSpace = colChild.attributes['w:space'] ?? colChild.attributes['space'];
           if (colW) {
-            colDefs.push({
-              widthPt: twipsToPt(Number(colW)),
-              spacePt: colSpace ? twipsToPt(Number(colSpace)) : undefined,
-            });
+            const widthPt = finiteTwips(colW, NaN);
+            if (Number.isFinite(widthPt)) {
+              const colSpacePt = colSpace ? finiteTwips(colSpace, NaN) : undefined;
+              colDefs.push({ widthPt, ...(Number.isFinite(colSpacePt) ? { spacePt: colSpacePt } : {}) });
+            }
           }
         }
       }
@@ -252,6 +267,8 @@ export class StandardDocumentParser implements DocumentParser {
     footnotes?: FootnoteNode[],
     endnotes?: FootnoteNode[],
     comments?: CommentNode[],
+    customStylesXml?: string,
+    customNumberingXml?: string,
   ): DocumentNode {
     // Find w:body
     let bodyNode: XmlNode | undefined;
@@ -275,6 +292,8 @@ export class StandardDocumentParser implements DocumentParser {
         footnotes,
         endnotes,
         comments,
+        customStylesXml,
+        customNumberingXml,
       };
     }
 
@@ -292,6 +311,9 @@ export class StandardDocumentParser implements DocumentParser {
           imageResolver,
           hyperlinkResolver,
         );
+        // Floating shape textboxes surface as sibling blocks right after
+        // their anchor paragraph (see drainPendingBlocks).
+        const extraBlocks = this.paragraphParser.drainPendingBlocks?.() ?? [];
 
         // Check if paragraph contains section break in pPr
         const pPr = child.children.find((c) => c.nodeName.toLowerCase().endsWith('ppr'));
@@ -304,6 +326,7 @@ export class StandardDocumentParser implements DocumentParser {
           if (paragraph.children.length > 0) {
             currentBlocks.push(paragraph);
           }
+          currentBlocks.push(...extraBlocks);
           const { headers, footers } = parseSectionHeaderFooterReferences(sectPr, headerFooterResolver);
           sections.push({
             type: 'section',
@@ -314,11 +337,24 @@ export class StandardDocumentParser implements DocumentParser {
           });
           currentBlocks = [];
         } else {
-          currentBlocks.push(paragraph);
+          currentBlocks.push(paragraph, ...extraBlocks);
         }
       } else if (tag === 'tbl') {
         const table = this.tableParser.parseTable(child, styleResolver, numberingResolver);
         currentBlocks.push(table);
+      } else if (tag === 'sdt') {
+        // Content controls unwrap to their authored blocks (F-VMLSDT).
+        currentBlocks.push(
+          ...parseSdtContentBlocks(
+            child,
+            styleResolver,
+            numberingResolver,
+            imageResolver,
+            hyperlinkResolver,
+            this.paragraphParser,
+            this.tableParser,
+          ),
+        );
       } else if (tag === 'sectpr') {
         // Final section properties for the body
         const { headers, footers } = parseSectionHeaderFooterReferences(child, headerFooterResolver);
@@ -349,6 +385,8 @@ export class StandardDocumentParser implements DocumentParser {
       footnotes,
       endnotes,
       comments,
+      customStylesXml,
+      customNumberingXml,
     };
   }
 
@@ -374,8 +412,12 @@ export class StandardDocumentParser implements DocumentParser {
     const stylesRel = docRels.find((r) => r.type === KNOWN_RELATIONSHIPS.STYLES);
     const stylesPartPath = resolveWordPartPath(stylesRel?.target, 'word/styles.xml');
     const stylesPart = pkg.getPart(stylesPartPath);
+    // Keep the raw source part verbatim: it round-trips back into the
+    // written package so Word-authored definitions survive (F-STYLELOSS).
+    // Style *resolution* still uses the parsed tree above.
+    const customStylesXml = stylesPart ? textDecoder.decode(stylesPart.data) : undefined;
     if (stylesPart) {
-      const stylesXml = parseWithMarkupCompatibility(textDecoder.decode(stylesPart.data), (xml) => defaultXmlAdapter.parse(xml));
+      const stylesXml = parseWithMarkupCompatibility(customStylesXml!, (xml) => defaultXmlAdapter.parse(xml));
       const resolver = new StandardStyleResolver();
       resolver.loadStyles(stylesXml);
       styleResolver = resolver;
@@ -386,31 +428,44 @@ export class StandardDocumentParser implements DocumentParser {
     const numRel = docRels.find((r) => r.type === KNOWN_RELATIONSHIPS.NUMBERING);
     const numPartPath = resolveWordPartPath(numRel?.target, 'word/numbering.xml');
     const numPart = pkg.getPart(numPartPath);
+    const customNumberingXml = numPart ? textDecoder.decode(numPart.data) : undefined;
     if (numPart) {
-      const numXml = parseWithMarkupCompatibility(textDecoder.decode(numPart.data), (xml) => defaultXmlAdapter.parse(xml));
+      const numXml = parseWithMarkupCompatibility(customNumberingXml!, (xml) => defaultXmlAdapter.parse(xml));
       const resolver = new StandardNumberingResolver();
       resolver.parseNumberingXml(numXml);
       numberingResolver = resolver;
     }
 
-    // 4. Resolve images
-    const imageMap = new Map<string, { data?: Uint8Array; mimeType?: string; name?: string }>();
-    for (const rel of docRels) {
-      if (rel.type === KNOWN_RELATIONSHIPS.IMAGE) {
-        const imgPath = rel.target.startsWith('word/') ? rel.target : `word/${rel.target.replace(/^\/+/, '')}`;
-        const imgPart = pkg.getPart(imgPath);
-        if (imgPart) {
-          imageMap.set(rel.id, {
-            data: imgPart.data,
-            mimeType: imgPart.contentType,
-            name: rel.target,
-          });
+    // 4. Resolve images. Relationship ids are scoped per part: a header,
+    // footer, footnote, or comment part resolves its image rels against
+    // its OWN .rels file, never the document's (F-HDRIMG). Sharing the
+    // document map would both drop part-local images and risk matching
+    // an unrelated same-id relationship from another part.
+    const buildImageMap = (
+      rels: OpcRelationship[],
+    ): Map<string, { data?: Uint8Array; mimeType?: string; name?: string }> => {
+      const map = new Map<string, { data?: Uint8Array; mimeType?: string; name?: string }>();
+      for (const rel of rels) {
+        if (rel.type === KNOWN_RELATIONSHIPS.IMAGE) {
+          const imgPath = rel.target.startsWith('word/') ? rel.target : `word/${rel.target.replace(/^\/+/, '')}`;
+          const imgPart = pkg.getPart(imgPath);
+          if (imgPart) {
+            map.set(rel.id, {
+              data: imgPart.data,
+              mimeType: imgPart.contentType,
+              name: rel.target,
+            });
+          }
         }
       }
-    }
-    const imageResolver: ImageResolver = {
-      resolveImage: (relId) => imageMap.get(relId),
+      return map;
     };
+    const resolverFor = (
+      map: Map<string, { data?: Uint8Array; mimeType?: string; name?: string }>,
+    ): ImageResolver => ({
+      resolveImage: (relId) => map.get(relId),
+    });
+    const imageResolver = resolverFor(buildImageMap(docRels));
 
     // 5. Resolve headers and footers
     const headerMap = new Map<string, HeaderFooterNode>();
@@ -421,7 +476,7 @@ export class StandardDocumentParser implements DocumentParser {
         const hPart = pkg.getPart(hPath);
         if (hPart) {
           const hXml = parseWithMarkupCompatibility(textDecoder.decode(hPart.data), (xml) => defaultXmlAdapter.parse(xml));
-          const hNode = parseHeaderFooterNode(hXml, 'default', styleResolver, numberingResolver, imageResolver);
+          const hNode = parseHeaderFooterNode(hXml, 'default', styleResolver, numberingResolver, resolverFor(buildImageMap(pkg.getRelationships(hPath))));
           headerMap.set(rel.id, hNode);
         }
       } else if (rel.type === KNOWN_RELATIONSHIPS.FOOTER) {
@@ -429,7 +484,7 @@ export class StandardDocumentParser implements DocumentParser {
         const fPart = pkg.getPart(fPath);
         if (fPart) {
           const fXml = parseWithMarkupCompatibility(textDecoder.decode(fPart.data), (xml) => defaultXmlAdapter.parse(xml));
-          const fNode = parseHeaderFooterNode(fXml, 'default', styleResolver, numberingResolver, imageResolver);
+          const fNode = parseHeaderFooterNode(fXml, 'default', styleResolver, numberingResolver, resolverFor(buildImageMap(pkg.getRelationships(fPath))));
           footerMap.set(rel.id, fNode);
         }
       }
@@ -460,7 +515,7 @@ export class StandardDocumentParser implements DocumentParser {
         textDecoder.decode(fnPart.data),
         styleResolver,
         numberingResolver,
-        imageResolver,
+        resolverFor(buildImageMap(pkg.getRelationships(fnPath))),
         hyperlinkResolver,
       );
     }
@@ -474,7 +529,7 @@ export class StandardDocumentParser implements DocumentParser {
         textDecoder.decode(enPart.data),
         styleResolver,
         numberingResolver,
-        imageResolver,
+        resolverFor(buildImageMap(pkg.getRelationships(enPath))),
         hyperlinkResolver,
       );
     }
@@ -489,7 +544,7 @@ export class StandardDocumentParser implements DocumentParser {
         textDecoder.decode(comPart.data),
         styleResolver,
         numberingResolver,
-        imageResolver,
+        resolverFor(buildImageMap(pkg.getRelationships(comPath))),
         hyperlinkResolver,
       );
     }
@@ -510,6 +565,8 @@ export class StandardDocumentParser implements DocumentParser {
       footnotes,
       endnotes,
       comments,
+      customStylesXml,
+      customNumberingXml,
     );
   }
 }

@@ -143,8 +143,11 @@ export class StandardNumberingResolver implements NumberingResolver {
   }
 
   parseNumberingXml(xmlOrNode: string | XmlNode): void {
-    // Counters belong to the numbering definition being loaded — parsing a
-    // new numbering part must not resume counts from a previous one (v2 N12).
+    // A parse replaces the whole numbering part: stale definitions from a
+    // previous document must not survive alongside the new ones (F-N12R).
+    // Counters likewise restart with the newly loaded definitions (v2 N12).
+    this.abstractNums.clear();
+    this.concreteNums.clear();
     this.reset();
     const rootNode = typeof xmlOrNode === 'string' ? this.xmlAdapter.parse(xmlOrNode) : xmlOrNode;
 
@@ -326,8 +329,12 @@ export class StandardNumberingResolver implements NumberingResolver {
 }
 
 /**
- * Shared default instance. NOTE: numbering counters are instance state —
- * when parsing several documents, either construct a fresh resolver per
- * document (as StandardDocumentParser does) or call reset() before reuse.
+ * Shared default instance.
+ *
+ * @deprecated Prefer a fresh `new StandardNumberingResolver()` per document
+ * (as StandardDocumentParser does). Reusing this singleton is safe only for
+ * read-only resolution of a single numbering part: `parseNumberingXml`
+ * replaces all definitions and counters, but concurrent or interleaved use
+ * across documents still shares mutable resolution state.
  */
 export const defaultNumberingResolver = new StandardNumberingResolver();

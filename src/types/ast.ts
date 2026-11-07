@@ -49,6 +49,13 @@ export interface DrawingShapeNode extends BaseASTNode {
     color: string;
     widthPt: number;
   };
+  /**
+   * Textbox paragraphs (`wps:txbx`/`w:txbxContent`) owned by the shape.
+   * The parser also drains a copy into the surrounding flow so the text
+   * renders in today's shape-text-less layout; the writer emits this copy
+   * back inside `wps:txbx` so the shape/text association round-trips.
+   */
+  textbox?: ParagraphNode[];
 }
 
 export interface ImageNode extends BaseASTNode {
@@ -62,6 +69,25 @@ export interface ImageNode extends BaseASTNode {
   data?: Uint8Array;
   mimeType?: string;
   relationshipId?: string;
+  /**
+   * Floating placement from `wp:anchor` (`positionH`/`positionV`). Absent
+   * for inline images. Offsets are resolved by the layout engine against
+   * the named reference (column, page, paragraph, ...); text wrapping
+   * around floats is not modeled — the image overlays at its position.
+   */
+  anchor?: ImageAnchor;
+}
+
+export interface ImageAnchor {
+  horizontalFrom: string;
+  horizontalOffsetPt: number;
+  /** Alignment keyword (`w:align`: center/right/inside/...) when no `w:posOffset` is present. */
+  horizontalAlign?: string;
+  verticalFrom: string;
+  verticalOffsetPt: number;
+  /** Alignment keyword (`w:align`: top/center/bottom/...) when no `w:posOffset` is present. */
+  verticalAlign?: string;
+  behindDoc?: boolean;
 }
 
 export interface HyperlinkInfo {
@@ -252,4 +278,12 @@ export interface DocumentNode extends BaseASTNode {
   footnotes?: FootnoteNode[];
   endnotes?: FootnoteNode[];
   comments?: CommentNode[];
+  /**
+   * Raw source XML of word/styles.xml / word/numbering.xml, preserved
+   * verbatim for round-trip fidelity (F-STYLELOSS). Absent for
+   * programmatically built documents, where defaults are generated on
+   * write instead.
+   */
+  customStylesXml?: string;
+  customNumberingXml?: string;
 }

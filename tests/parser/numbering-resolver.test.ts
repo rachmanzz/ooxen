@@ -155,3 +155,56 @@ describe('Numbering Resolver & Multilevel Lists', () => {
     }
   });
 });
+
+describe('Numbering resolver isolation (F-N12R)', () => {
+  const numbering = (numId: number, abstractId: number, format: string, text: string): string => `
+      <w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+        <w:abstractNum w:abstractNumId="${abstractId}">
+          <w:lvl w:ilvl="0">
+            <w:start w:val="1"/>
+            <w:numFmt w:val="${format}"/>
+            <w:lvlText w:val="${text}"/>
+          </w:lvl>
+        </w:abstractNum>
+        <w:num w:numId="${numId}">
+          <w:abstractNumId w:val="${abstractId}"/>
+        </w:num>
+      </w:numbering>
+    `;
+
+  it('should not leak numbering definitions across parses on one resolver', () => {
+    const resolver = new StandardNumberingResolver();
+    resolver.parseNumberingXml(numbering(1, 10, 'decimal', '%1)'));
+    expect(resolver.resolveNumbering(1, 0)?.prefixText).toBe('1)');
+
+    // A second part that defines only numId 7: the dangling numId 1
+    // definition from the first part must be gone, so resolution falls
+    // back to the synthetic counter ('1.') instead of the stale '1)'.
+    resolver.parseNumberingXml(numbering(7, 70, 'decimal', '%1.'));
+    expect(resolver.resolveNumbering(7, 0)?.prefixText).toBe('1.');
+    expect(resolver.resolveNumbering(1, 0)?.prefixText).toBe('1.');
+  });
+
+  it('should drop a stale start override when the numId is redefined', () => {
+    const startAt = (numId: number, abstractId: number, start: number): string => `
+      <w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+        <w:abstractNum w:abstractNumId="${abstractId}">
+          <w:lvl w:ilvl="0">
+            <w:start w:val="${start}"/>
+            <w:numFmt w:val="decimal"/>
+            <w:lvlText w:val="%1."/>
+          </w:lvl>
+        </w:abstractNum>
+        <w:num w:numId="${numId}">
+          <w:abstractNumId w:val="${abstractId}"/>
+        </w:num>
+      </w:numbering>
+    `;
+    const resolver = new StandardNumberingResolver();
+    resolver.parseNumberingXml(startAt(1, 10, 5));
+    expect(resolver.resolveNumbering(1, 0)?.prefixText).toBe('5.');
+
+    resolver.parseNumberingXml(startAt(7, 70, 1));
+    expect(resolver.resolveNumbering(1, 0)?.prefixText).toBe('1.');
+  });
+});
