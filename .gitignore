@@ -2,6 +2,8 @@ knl-config.json
 .knowledges
 dist
 node_modules
+screenshot/
+example/
 gemini.md
 GEMINI.md
 agents.md

@@ -1,0 +1,177 @@
+/**
+ * Ooxen built-in stylesheet for HTML renderer output.
+ *
+ * Import it alongside the HTML string from `renderToHtmlString()`:
+ *
+ *   import '@rahmantech/ooxen/css';
+ *
+ * Or reference the file directly:
+ *
+ *   <link rel="stylesheet" href="node_modules/@rahmantech/ooxen/dist/renderer/html/ooxen.css" />
+ *
+ * Every rule is scoped under `.ooxen-document`, so it never leaks into
+ * the surrounding page. All document colors come from the renderer's
+ * inline styles; this file only supplies structural normalization
+ * (margins, page chrome, tables, notes) that inline styles omit.
+ */
+
+.ooxen-document {
+  color: #111;
+  font-family: Calibri, Carlito, 'Segoe UI', Arial, sans-serif;
+  font-size: 11pt;
+  line-height: 1.15;
+  overflow-wrap: break-word;
+}
+
+/* Page surface. Geometry (width, padding) stays inline from the renderer. */
+.ooxen-document .ooxen-section {
+  margin: 0 auto 24px auto;
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.18);
+}
+
+/* Normalize UA defaults the renderer does not set inline. */
+.ooxen-document .ooxen-p {
+  margin: 0;
+}
+
+.ooxen-document .ooxen-r {
+  font: inherit;
+}
+
+.ooxen-document .ooxen-tab-run {
+  white-space: pre;
+}
+
+.ooxen-document .ooxen-header {
+  margin-bottom: 12pt;
+}
+
+.ooxen-document .ooxen-footer {
+  margin-top: 12pt;
+}
+
+.ooxen-document .ooxen-footnotes ol,
+.ooxen-document .ooxen-endnotes ol {
+  margin: 0;
+  padding-left: 1.5em;
+}
+
+.ooxen-document .ooxen-footnotes,
+.ooxen-document .ooxen-endnotes {
+  font-size: 0.9em;
+}
+
+.ooxen-document .ooxen-footnote-separator,
+.ooxen-document .ooxen-endnote-separator {
+  width: 25%;
+  margin-left: 0;
+  border: none;
+  border-top: 1px solid #999;
+}
+
+.ooxen-document .ooxen-footnote-ref,
+.ooxen-document .ooxen-endnote-ref {
+  font-size: 0.8em;
+}
+
+.ooxen-document .ooxen-link {
+  color: #0563c1;
+  text-decoration: underline;
+}
+
+/* Tables: renderer sets widths and borders inline; keep cells predictable. */
+.ooxen-document .ooxen-table {
+  table-layout: fixed;
+}
+
+.ooxen-document .ooxen-tr {
+  break-inside: avoid;
+}
+
+.ooxen-document .ooxen-tc {
+  vertical-align: top;
+  min-width: 0;
+}
+
+/* Media keep their inline pt sizing; never overflow narrow containers. */
+.ooxen-document .ooxen-image {
+  max-width: 100%;
+}
+
+/* Floating images overlay at their anchor position instead of joining the
+   inline flow (F-HTMLFLOAT). The host paragraph is the positioning context;
+   behind-document floats paint beneath the text. */
+.ooxen-document .ooxen-has-float {
+  position: relative;
+}
+
+.ooxen-document .ooxen-float {
+  position: absolute;
+  max-width: none;
+}
+
+.ooxen-document .ooxen-behind-doc {
+  z-index: -1;
+}
+
+.ooxen-document .ooxen-shape {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* Tabs and list prefixes. */
+.ooxen-document .ooxen-tab {
+  white-space: pre;
+}
+
+.ooxen-document .ooxen-bullet {
+  font-weight: bold;
+}
+
+/* Comments sidebar. */
+.ooxen-document .ooxen-comments {
+  font-size: 0.9em;
+}
+
+.ooxen-document .ooxen-comment-card {
+  margin: 8px 0;
+  padding: 6px 10px;
+  border-left: 3px solid #999;
+  background: #f7f7f7;
+}
+
+.ooxen-document .ooxen-comment {
+  background: #fff3bf;
+}
+
+/* Tracked changes: decoration only, colors stay with the document. */
+.ooxen-document ins.ooxen-ins {
+  text-decoration: underline;
+}
+
+.ooxen-document del.ooxen-del {
+  text-decoration: line-through;
+}
+
+/* Field runs (PAGE, NUMPAGES, ...) share the run look. */
+.ooxen-document [class*='ooxen-field-'] {
+  font-weight: inherit;
+}
+
+/* Break markers are empty spans; block display lets break-before apply. */
+.ooxen-document .ooxen-page-break,
+.ooxen-document .ooxen-column-break {
+  display: block;
+}
+
+@media print {
+  .ooxen-document .ooxen-section {
+    margin: 0;
+    box-shadow: none;
+  }
+
+  .ooxen-document .ooxen-comment-card {
+    background: none;
+  }
+}

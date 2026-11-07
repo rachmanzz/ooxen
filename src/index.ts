@@ -32,6 +32,9 @@ export * from './parser/metadata/metadata-parser.js';
 export * from './parser/wml/footnote-parser.js';
 export * from './parser/wml/comment-parser.js';
 
+// Units (single source of truth for length conversion)
+export * from './units/length.js';
+
 // Layout
 export * from './fonts/ttf-parser.js';
 export * from './fonts/font-metrics-registry.js';
@@ -49,6 +52,7 @@ export * from './model/document-session.js';
 export * from './renderer/canvas/canvas-target.js';
 export * from './renderer/canvas/page-renderer.js';
 export * from './renderer/canvas/draw-primitives.js';
+export * from './renderer/canvas/image-loader.js';
 export * from './renderer/html/html-renderer.js';
 export * from './renderer/html/style-mapper.js';
 

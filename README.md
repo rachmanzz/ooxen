@@ -6,6 +6,21 @@ Ooxen is a pure headless rendering engine—not a direct UI viewer—designed to
 - **OOXML to XML-HTML / Canvas**: Parses OOXML documents and renders them into structured XML-HTML or HTML5 Canvas representations.
 - **HTML-Canvas to OOXML**: Serializes HTML-Canvas representations back into valid OOXML document packages.
 
+## Built-in CSS
+
+`renderToHtmlString()` output uses `ooxen-*` classes. Pair it with the
+built-in stylesheet so consumers get sane rendering from a bare import:
+
+```ts
+import '@rahmantech/ooxen/css';
+```
+
+All rules are scoped under `.ooxen-document` and stay out of the way of
+the surrounding page. Document colors keep coming from the renderer's
+inline styles; the stylesheet only adds structural normalization
+(paragraph margins, page chrome, tables, footnotes, comments) plus a
+`@media print` pass that drops screen-only shadows.
+
 ## Architecture & Runtime
 
 - **Language**: TypeScript
