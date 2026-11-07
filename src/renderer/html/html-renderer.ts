@@ -82,9 +82,48 @@ export function renderImageToHtml(image: ImageNode): string {
   if (!src && image.data && image.mimeType) {
     src = `data:${image.mimeType};base64,${uint8ArrayToBase64(image.data)}`;
   }
-  src = src ?? '';
+  // Omit an empty src so browsers never self-request the page (F-HTMLFLOAT).
+  const srcAttr = src ? ` src="${escapeXml(src)}"` : '';
+  const sizeStyle = `width: ${image.widthPt}pt; height: ${image.heightPt}pt;`;
 
-  return `<img class="ooxen-image" src="${escapeXml(src)}" alt="${escapeXml(alt)}" style="width: ${image.widthPt}pt; height: ${image.heightPt}pt;" />`;
+  const anchor = image.anchor;
+  if (!anchor) {
+    return `<img class="ooxen-image"${srcAttr} alt="${escapeXml(alt)}" style="${sizeStyle}" />`;
+  }
+
+  // Floating images overlay at their anchor position instead of joining the
+  // inline flow (F-HTMLFLOAT). Offsets resolve against the relatively
+  // positioned paragraph (`.ooxen-has-float`); page/margin-relative values
+  // are approximations from the content-box origin, matching the layout
+  // engine's overlay-only model (no text wrapping).
+  const classes = ['ooxen-image', 'ooxen-float'];
+  if (anchor.behindDoc) classes.push('ooxen-behind-doc');
+
+  const alignH = anchor.horizontalAlign?.toLowerCase();
+  let hPos: string;
+  if (alignH === 'center') {
+    hPos = `left: calc(50% - ${image.widthPt / 2}pt);`;
+  } else if (alignH === 'right' || alignH === 'outside') {
+    hPos = 'right: 0;';
+  } else if (alignH) {
+    hPos = 'left: 0;';
+  } else {
+    hPos = `left: ${anchor.horizontalOffsetPt}pt;`;
+  }
+
+  const alignV = anchor.verticalAlign?.toLowerCase();
+  let vPos: string;
+  if (alignV === 'center') {
+    vPos = `top: calc(50% - ${image.heightPt / 2}pt);`;
+  } else if (alignV === 'bottom' || alignV === 'outside') {
+    vPos = 'bottom: 0;';
+  } else if (alignV) {
+    vPos = 'top: 0;';
+  } else {
+    vPos = `top: ${anchor.verticalOffsetPt}pt;`;
+  }
+
+  return `<img class="${classes.join(' ')}"${srcAttr} alt="${escapeXml(alt)}" style="${sizeStyle} position: absolute; ${hPos} ${vPos}" />`;
 }
 
 /**
@@ -253,7 +292,9 @@ export class StandardHtmlRenderer implements HtmlRenderer {
       : '';
 
     const runsHtml = paragraph.children.map((run) => this.renderRun(run)).join('');
-    return `    <p class="ooxen-p"${idAttr}${styleAttr}>${prefixHtml}${runsHtml}</p>`;
+    // A paragraph hosting floats becomes their positioning context.
+    const floatClass = paragraph.children.some((run) => run.image?.anchor) ? ' ooxen-has-float' : '';
+    return `    <p class="ooxen-p${floatClass}"${idAttr}${styleAttr}>${prefixHtml}${runsHtml}</p>`;
   }
 
   private renderRun(run: RunNode): string {

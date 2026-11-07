@@ -130,7 +130,7 @@ export class StandardWmlBuilder implements WmlBuilder {
         } else if (block.type === 'table') {
           lines.push(this.serializeTable(block, hyperlinkRelIds));
         } else if (block.type === 'drawing') {
-          lines.push(this.serializeBlockDrawing(block));
+          lines.push(this.serializeBlockDrawing(block, hyperlinkRelIds));
         } else if (block.type === 'image') {
           lines.push(this.serializeBlockImage(block));
         }
@@ -167,7 +167,7 @@ export class StandardWmlBuilder implements WmlBuilder {
       } else if (block.type === 'table') {
         lines.push(this.serializeTable(block, hyperlinkRelIds));
       } else if (block.type === 'drawing') {
-        lines.push(this.serializeBlockDrawing(block));
+        lines.push(this.serializeBlockDrawing(block, hyperlinkRelIds));
       } else if (block.type === 'image') {
         lines.push(this.serializeBlockImage(block));
       }
@@ -193,7 +193,7 @@ export class StandardWmlBuilder implements WmlBuilder {
       } else if (block.type === 'table') {
         lines.push(this.serializeTable(block, hyperlinkRelIds));
       } else if (block.type === 'drawing') {
-        lines.push(this.serializeBlockDrawing(block));
+        lines.push(this.serializeBlockDrawing(block, hyperlinkRelIds));
       } else if (block.type === 'image') {
         lines.push(this.serializeBlockImage(block));
       }
@@ -325,7 +325,7 @@ export class StandardWmlBuilder implements WmlBuilder {
 
     if (!hlink) {
       setIndex(i + 1);
-      return this.serializeRun(run);
+      return this.serializeRun(run, hyperlinkRelIds);
     }
 
     const group: RunNode[] = [];
@@ -335,7 +335,7 @@ export class StandardWmlBuilder implements WmlBuilder {
     }
     setIndex(i);
 
-    const innerRuns = group.map((r) => this.serializeRun(r)).join('\n');
+    const innerRuns = group.map((r) => this.serializeRun(r, hyperlinkRelIds)).join('\n');
     const tooltipAttr = hlink.tooltip ? ` w:tooltip="${escapeXml(hlink.tooltip)}"` : '';
 
     if (hlink.url) {
@@ -447,7 +447,7 @@ export class StandardWmlBuilder implements WmlBuilder {
     return ['      <w:pPr>', ...inner, '      </w:pPr>'].join('\n');
   }
 
-  private serializeRun(r: RunNode): string {
+  private serializeRun(r: RunNode, hyperlinkRelIds?: Map<string, string>): string {
     const rPr = this.serializeRunProperties(r.style);
     const textPieces: string[] = [];
     const textTag = r.revision?.type === 'delete' ? 'w:delText' : 'w:t';
@@ -501,7 +501,7 @@ export class StandardWmlBuilder implements WmlBuilder {
       textPieces.push('      <w:tab/>');
     }
 
-    const drawingXml = r.drawing ? this.serializeDrawing(r.drawing) : '';
+    const drawingXml = r.drawing ? this.serializeDrawing(r.drawing, hyperlinkRelIds) : '';
     const imageXml = r.image ? this.serializeImage(r.image) : '';
     const footnoteRefXml = r.footnoteRef
       ? r.footnoteRef.kind === 'footnote'
@@ -593,7 +593,7 @@ export class StandardWmlBuilder implements WmlBuilder {
     ].join('\n');
   }
 
-  private serializeDrawing(shape: DrawingShapeNode): string {
+  private serializeDrawing(shape: DrawingShapeNode, hyperlinkRelIds?: Map<string, string>): string {
     const cx = Math.round(shape.widthPt * 12700);
     const cy = Math.round(shape.heightPt * 12700);
     const id = shape.id ?? '1';
@@ -632,6 +632,19 @@ export class StandardWmlBuilder implements WmlBuilder {
       ? `                      <a:ln w="${Math.round(shape.stroke.widthPt * 12700)}"><a:solidFill><a:srgbClr val="${cleanHexColor(shape.stroke.color)}"/></a:solidFill></a:ln>`
       : '';
 
+    // Textbox round-trip (F-TXTBOX): paragraphs stashed on the shape parse
+    // back into w:txbxContent (and drain again as siblings, as on import).
+    const textboxXml =
+      shape.textbox && shape.textbox.length > 0
+        ? [
+            '                      <wps:txbx>',
+            '                        <w:txbxContent>',
+            ...shape.textbox.map((p) => this.buildParagraphXml(p, hyperlinkRelIds)),
+            '                        </w:txbxContent>',
+            '                      </wps:txbx>',
+          ].join('\n')
+        : '';
+
     return [
       '        <w:drawing>',
       '          <wp:inline>',
@@ -655,6 +668,7 @@ export class StandardWmlBuilder implements WmlBuilder {
       fillXml,
       strokeXml,
       '                  </wps:spPr>',
+      textboxXml,
       '                </wps:wsp>',
       '              </a:graphicData>',
       '            </a:graphic>',
@@ -663,11 +677,11 @@ export class StandardWmlBuilder implements WmlBuilder {
     ].filter(Boolean).join('\n');
   }
 
-  private serializeBlockDrawing(shape: DrawingShapeNode): string {
+  private serializeBlockDrawing(shape: DrawingShapeNode, hyperlinkRelIds?: Map<string, string>): string {
     return [
       '    <w:p>',
       '      <w:r>',
-      this.serializeDrawing(shape),
+      this.serializeDrawing(shape, hyperlinkRelIds),
       '      </w:r>',
       '    </w:p>',
     ].join('\n');
@@ -829,7 +843,7 @@ export class StandardWmlBuilder implements WmlBuilder {
         if (child.type === 'paragraph') return this.serializeParagraph(child, hyperlinkRelIds);
         if (child.type === 'table') return this.serializeTable(child, hyperlinkRelIds);
         if (child.type === 'image') return this.serializeBlockImage(child);
-        return this.serializeBlockDrawing(child);
+        return this.serializeBlockDrawing(child, hyperlinkRelIds);
       })
       .join('\n');
 

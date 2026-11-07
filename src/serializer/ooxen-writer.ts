@@ -108,10 +108,19 @@ export class StandardOoxenWriter implements OoxenWriter {
       }
     };
 
+    // Numbering ids referenced by the AST, with their format hints, so
+    // the package builder can synthesize definitions for ids beyond the
+    // built-in 1/2 instead of emitting dangling refs (F-NUMDANGLE).
+    const requiredNumIds = new Map<number, string | undefined>();
+
     const traverseBlock = (block: BlockNode): void => {
       if (block.type === 'image') {
         processImage(block);
       } else if (block.type === 'paragraph') {
+        const numId = block.style?.numbering?.numId;
+        if (numId !== undefined) {
+          requiredNumIds.set(numId, block.style?.numbering?.format);
+        }
         for (const r of block.children) {
           if (r.image) processImage(r.image);
           if (r.hyperlink?.url) processHyperlink(r.hyperlink.url);
@@ -181,8 +190,8 @@ export class StandardOoxenWriter implements OoxenWriter {
     const documentXml = this.wmlBuilder.buildDocumentXml(doc, headerFooterRelIds, hyperlinkRelIds);
     const pkg = this.packageBuilder.assemblePackage(
       documentXml,
-      undefined,
-      undefined,
+      doc.customStylesXml,
+      doc.customNumberingXml,
       mediaParts,
       headerFooterParts,
       externalRelationships,
@@ -192,6 +201,8 @@ export class StandardOoxenWriter implements OoxenWriter {
       undefined,
       undefined,
       doc.comments,
+      undefined,
+      requiredNumIds,
     );
     return pkg.serialize();
   }

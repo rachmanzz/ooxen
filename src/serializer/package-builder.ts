@@ -43,6 +43,7 @@ export interface PackageBuilder {
     customEndnotesXml?: string,
     comments?: CommentNode[],
     customCommentsXml?: string,
+    requiredNumIds?: ReadonlyMap<number, string | undefined>,
   ): OpcPackage;
 }
 
@@ -81,6 +82,7 @@ export class StandardPackageBuilder implements PackageBuilder {
     customEndnotesXml?: string,
     comments?: CommentNode[],
     customCommentsXml?: string,
+    requiredNumIds?: ReadonlyMap<number, string | undefined>,
   ): OpcPackage {
     const pkg = createPackage();
 
@@ -134,8 +136,8 @@ export class StandardPackageBuilder implements PackageBuilder {
     });
 
     // 4. Add numbering.xml if document contains numbering references or custom numbering provided
-    if (customNumberingXml || documentXml.includes('<w:numPr>')) {
-      const numXml = customNumberingXml ?? this.numberingBuilder.buildDefaultNumberingXml();
+    if (customNumberingXml || documentXml.includes('<w:numPr>') || (requiredNumIds && requiredNumIds.size > 0)) {
+      const numXml = customNumberingXml ?? this.numberingBuilder.buildDefaultNumberingXml(requiredNumIds);
       pkg.addRelationship('word/document.xml', {
         id: nextRelId(),
         type: KNOWN_RELATIONSHIPS.NUMBERING,
