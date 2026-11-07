@@ -51,17 +51,24 @@ export function coalesceRuns(runs: RunNode[]): RunNode[] {
     if (!run.text && !run.drawing && !run.image) continue;
 
     if (run.drawing || run.image) {
+      // Media runs keep every metadata channel (F-SLICEDROP): a hyperlink
+      // image or footnote-mark drawing must survive coalescing intact.
       result.push({
         type: 'run',
         text: run.text ?? '',
         style: run.style ? { ...run.style } : undefined,
         drawing: run.drawing,
         image: run.image,
+        hyperlink: run.hyperlink ? { ...run.hyperlink } : undefined,
+        bookmarkName: run.bookmarkName,
         footnoteRef: run.footnoteRef ? { ...run.footnoteRef } : undefined,
+        isFootnoteRefMark: run.isFootnoteRefMark,
         commentId: run.commentId,
         breakType: run.breakType,
         revision: run.revision,
         isTab: run.isTab,
+        field: run.field,
+        segments: run.segments ? run.segments.map((s) => ({ ...s })) : undefined,
       });
       continue;
     }
@@ -74,6 +81,7 @@ export function coalesceRuns(runs: RunNode[]): RunNode[] {
     // values, and every rebuilt run must keep that metadata — otherwise a
     // styled-range edit silently strips it (v2 N5).
     const sameFootnote = sameFootnoteRef(last?.footnoteRef, run.footnoteRef);
+    const sameMark = Boolean(last?.isFootnoteRefMark) === Boolean(run.isFootnoteRefMark);
     const sameComment = last?.commentId === run.commentId;
     const sameBreak = last?.breakType === run.breakType;
     const sameRevision = sameRevisionInfo(last?.revision, run.revision);
@@ -88,12 +96,18 @@ export function coalesceRuns(runs: RunNode[]): RunNode[] {
       sameBookmark &&
       sameField &&
       sameFootnote &&
+      sameMark &&
       sameComment &&
       sameBreak &&
       sameRevision &&
       sameTab
     ) {
       last.text += run.text;
+      // Keep exact content segments across the merge so footnote marks and
+      // tab/break interleavings survive coalescing (F-SLICEDROP).
+      if (run.segments) {
+        last.segments = [...(last.segments ?? []), ...run.segments.map((s) => ({ ...s }))];
+      }
     } else {
       result.push({
         type: 'run',
@@ -102,11 +116,13 @@ export function coalesceRuns(runs: RunNode[]): RunNode[] {
         hyperlink: run.hyperlink ? { ...run.hyperlink } : undefined,
         bookmarkName: run.bookmarkName,
         footnoteRef: run.footnoteRef ? { ...run.footnoteRef } : undefined,
+        isFootnoteRefMark: run.isFootnoteRefMark,
         commentId: run.commentId,
         breakType: run.breakType,
         revision: run.revision,
         isTab: run.isTab,
         field: run.field,
+        segments: run.segments ? run.segments.map((s) => ({ ...s })) : undefined,
       });
     }
   }
@@ -166,11 +182,13 @@ export function sliceParagraphRange(
         hyperlink: run.hyperlink ? { ...run.hyperlink } : undefined,
         bookmarkName: run.bookmarkName,
         footnoteRef: run.footnoteRef,
+        isFootnoteRefMark: run.isFootnoteRefMark,
         commentId: run.commentId,
         breakType: run.breakType,
         revision: run.revision,
         isTab: run.isTab,
         field: run.field,
+        segments: run.segments ? run.segments.map((seg) => ({ ...seg })) : undefined,
       });
     } else if (runStart >= start && runEnd <= end) {
       // Case 2: Run is completely inside the target range
@@ -183,11 +201,13 @@ export function sliceParagraphRange(
         hyperlink: run.hyperlink ? { ...run.hyperlink } : undefined,
         bookmarkName: run.bookmarkName,
         footnoteRef: run.footnoteRef,
+        isFootnoteRefMark: run.isFootnoteRefMark,
         commentId: run.commentId,
         breakType: run.breakType,
         revision: run.revision,
         isTab: run.isTab,
         field: run.field,
+        segments: run.segments ? run.segments.map((seg) => ({ ...seg })) : undefined,
       });
     } else {
       // Case 3: Partial overlap -> split into up to 3 segments
@@ -198,6 +218,30 @@ export function sliceParagraphRange(
       const middleText = runText.slice(overlapStart - runStart, overlapEnd - runStart);
       const rightText = runText.slice(overlapEnd - runStart);
 
+      // A zero-width media run covered by the range carries no sliceable
+      // text; keep it whole rather than dropping it (F-SLICEDROP).
+      if (leftText.length === 0 && middleText.length === 0 && rightText.length === 0) {
+        if (run.drawing || run.image) {
+          newRuns.push({
+            type: 'run',
+            text: runText,
+            style: { ...run.style, ...patchStyle },
+            drawing: run.drawing,
+            image: run.image,
+            hyperlink: run.hyperlink ? { ...run.hyperlink } : undefined,
+            bookmarkName: run.bookmarkName,
+            footnoteRef: run.footnoteRef,
+            isFootnoteRefMark: run.isFootnoteRefMark,
+            commentId: run.commentId,
+            breakType: run.breakType,
+            revision: run.revision,
+            isTab: run.isTab,
+            field: run.field,
+            segments: run.segments ? run.segments.map((seg) => ({ ...seg })) : undefined,
+          });
+        }
+      }
+
       if (leftText.length > 0) {
         newRuns.push({
           type: 'run',
@@ -206,11 +250,13 @@ export function sliceParagraphRange(
           hyperlink: run.hyperlink ? { ...run.hyperlink } : undefined,
           bookmarkName: run.bookmarkName,
           footnoteRef: run.footnoteRef,
+          isFootnoteRefMark: run.isFootnoteRefMark,
           commentId: run.commentId,
           breakType: run.breakType,
           revision: run.revision,
           isTab: run.isTab,
           field: run.field,
+          segments: run.segments ? run.segments.map((seg) => ({ ...seg })) : undefined,
         });
       }
 
@@ -219,14 +265,18 @@ export function sliceParagraphRange(
           type: 'run',
           text: middleText,
           style: { ...run.style, ...patchStyle },
+          drawing: run.drawing,
+          image: run.image,
           hyperlink: run.hyperlink ? { ...run.hyperlink } : undefined,
           bookmarkName: run.bookmarkName,
           footnoteRef: run.footnoteRef,
+          isFootnoteRefMark: run.isFootnoteRefMark,
           commentId: run.commentId,
           breakType: run.breakType,
           revision: run.revision,
           isTab: run.isTab,
           field: run.field,
+          segments: run.segments ? run.segments.map((seg) => ({ ...seg })) : undefined,
         });
       }
 
@@ -238,11 +288,13 @@ export function sliceParagraphRange(
           hyperlink: run.hyperlink ? { ...run.hyperlink } : undefined,
           bookmarkName: run.bookmarkName,
           footnoteRef: run.footnoteRef,
+          isFootnoteRefMark: run.isFootnoteRefMark,
           commentId: run.commentId,
           breakType: run.breakType,
           revision: run.revision,
           isTab: run.isTab,
           field: run.field,
+          segments: run.segments ? run.segments.map((seg) => ({ ...seg })) : undefined,
         });
       }
     }

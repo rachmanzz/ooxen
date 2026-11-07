@@ -29,6 +29,8 @@ export interface LineFragment {
   revision?: RevisionInfo;
   isTab?: boolean;
   tabLeader?: TabLeader;
+  /** True when the tab matched a `bar` stop: render a vertical rule. */
+  barTab?: boolean;
 }
 
 export interface LayoutLine {
@@ -47,6 +49,7 @@ interface WordToken {
   isSpace: boolean;
   isTab?: boolean;
   tabLeader?: TabLeader;
+  barTab?: boolean;
   width: number;
   height: number;
   ascent: number;
@@ -85,6 +88,13 @@ export class StandardLineBreaker implements LineBreaker {
       : paragraph.children;
 
     const tokens = this.tokenizeRuns(runsToTokenize);
+    // A paragraph-initial tab is dropped when real text follows (reference
+    // renderers collapse it); a tab-only paragraph keeps its first tab so
+    // leader-dot rows survive. Tabs after wrapping are always kept.
+    const paraHasText = tokens.some(
+      (t) => !t.isSpace && !t.isTab && t.breakType === undefined && t.text !== '\n' && t.text.trim().length > 0,
+    );
+    let paragraphHasContent = false;
     if (tokens.length === 0) {
       // Empty paragraph line
       const defaultSize = 11;
@@ -157,6 +167,7 @@ export class StandardLineBreaker implements LineBreaker {
         const computed = this.computeTabToken(i, tokens, currentXFromMargin, pStyle?.tabStops);
         token.width = computed.width;
         token.tabLeader = computed.leader;
+        token.barTab = computed.barTab;
       }
 
       // Check if adding this token overflows
@@ -185,6 +196,7 @@ export class StandardLineBreaker implements LineBreaker {
           const computed = this.computeTabToken(i, tokens, newLineStartX, pStyle?.tabStops);
           token.width = computed.width;
           token.tabLeader = computed.leader;
+          token.barTab = computed.barTab;
         }
       }
 
@@ -193,7 +205,19 @@ export class StandardLineBreaker implements LineBreaker {
         continue;
       }
 
+      // Avoid a paragraph-initial tab when real text follows (see above).
+      if (
+        currentTokens.length === 0 &&
+        token.isTab &&
+        isFirstLine &&
+        !paragraphHasContent &&
+        paraHasText
+      ) {
+        continue;
+      }
+
       currentTokens.push(token);
+      paragraphHasContent = true;
       currentLineWidth += token.width;
     }
 
@@ -235,12 +259,15 @@ export class StandardLineBreaker implements LineBreaker {
       }
 
       if (run.image) {
+        // Floating (anchored) images do not consume inline space; the page
+        // engine positions their fragment at the anchor offset instead.
+        const floating = run.image.anchor !== undefined;
         tokens.push({
           text: '',
           isSpace: false,
-          width: run.image.widthPt,
-          height: run.image.heightPt,
-          ascent: run.image.heightPt,
+          width: floating ? 0 : run.image.widthPt,
+          height: floating ? 0 : run.image.heightPt,
+          ascent: floating ? 0 : run.image.heightPt,
           descent: 0,
           style: run.style,
           image: run.image,
@@ -352,7 +379,7 @@ export class StandardLineBreaker implements LineBreaker {
     tokens: WordToken[],
     currentXFromMargin: number,
     tabStops?: TabStop[],
-  ): { width: number; leader?: TabLeader } {
+  ): { width: number; leader?: TabLeader; barTab?: boolean } {
     const defaultInterval = 36; // 720 twips = 36 pt
 
     // Look for the next custom tab stop ahead of current position
@@ -361,31 +388,44 @@ export class StandardLineBreaker implements LineBreaker {
       .sort((a, b) => a.positionPt - b.positionPt)[0];
 
     if (matchedStop) {
-      if (matchedStop.alignment === 'right') {
+      if (matchedStop.alignment === 'right' || matchedStop.alignment === 'center' || matchedStop.alignment === 'decimal') {
         let followingWidth = 0;
+        let integerWidth = 0;
+        let foundDot = false;
         for (let j = tokenIndex + 1; j < tokens.length; j++) {
           const nextT = tokens[j]!;
           if (nextT.isTab || nextT.text === '\n' || nextT.breakType) break;
           followingWidth += nextT.width;
+          if (!foundDot && matchedStop.alignment === 'decimal') {
+            const dot = nextT.text.indexOf('.');
+            if (dot < 0) {
+              integerWidth += nextT.width;
+            } else {
+              integerWidth += this.metrics.measureText(nextT.text.slice(0, dot), nextT.style).width;
+              foundDot = true;
+            }
+          }
         }
-        const targetX = matchedStop.positionPt - followingWidth;
+        // Decimal tabs anchor the decimal point at the stop; text without
+        // a point falls back to right alignment (F-TABSPAN).
+        const targetX =
+          matchedStop.alignment === 'center'
+            ? matchedStop.positionPt - followingWidth / 2
+            : matchedStop.alignment === 'decimal' && foundDot
+              ? matchedStop.positionPt - integerWidth
+              : matchedStop.positionPt - followingWidth;
         const width = Math.max(8, targetX - currentXFromMargin);
         return { width, leader: matchedStop.leader };
       }
 
-      if (matchedStop.alignment === 'center') {
-        let followingWidth = 0;
-        for (let j = tokenIndex + 1; j < tokens.length; j++) {
-          const nextT = tokens[j]!;
-          if (nextT.isTab || nextT.text === '\n' || nextT.breakType) break;
-          followingWidth += nextT.width;
-        }
-        const targetX = matchedStop.positionPt - followingWidth / 2;
-        const width = Math.max(8, targetX - currentXFromMargin);
-        return { width, leader: matchedStop.leader };
+      if (matchedStop.alignment === 'bar') {
+        // Bar tabs advance to the stop and mark the fragment so renderers
+        // paint a vertical rule there (F-TABSPAN).
+        const width = Math.max(8, matchedStop.positionPt - currentXFromMargin);
+        return { width, leader: 'none', barTab: true };
       }
 
-      // 'left', 'decimal', 'bar', etc.
+      // 'left', etc.
       const width = Math.max(8, matchedStop.positionPt - currentXFromMargin);
       return { width, leader: matchedStop.leader };
     }
@@ -499,6 +539,7 @@ export class StandardLineBreaker implements LineBreaker {
         revision: token.revision,
         isTab: token.isTab,
         tabLeader: token.tabLeader,
+        barTab: token.barTab,
         bounds: {
           x: currentX,
           y: maxAscent - token.ascent, // baseline alignment

@@ -47,4 +47,34 @@ describe('Layout Page Engine', () => {
       }
     }
   });
+
+  it('should honor lineSpacingPt as the minimum vertical advance per line', () => {
+    // Same body, once with natural advance and once with exact-like 24pt
+    // spacing: content height is 648pt, so 24pt spacing caps each page at
+    // 27 lines and must paginate MORE pages than natural advance.
+    const makeDoc = (lineSpacingPt?: number): DocumentNode => ({
+      type: 'document',
+      sections: [
+        {
+          type: 'section',
+          properties: {
+            pageSize: { width: 612, height: 792 },
+            margins: { top: 72, right: 72, bottom: 72, left: 72 },
+          },
+          children: Array.from({ length: 60 }, (_, i) => ({
+            type: 'paragraph' as const,
+            style: { spaceAfterPt: 0, lineSpacingPt },
+            children: [{ type: 'run' as const, text: `Paragraph #${i + 1}: Layout test content for pagination.` }],
+          })),
+        },
+      ],
+    });
+
+    const natural = pageEngine.layoutDocument(makeDoc(undefined));
+    const spaced = pageEngine.layoutDocument(makeDoc(24));
+    expect(spaced.length).toBeGreaterThan(natural.length);
+    for (const page of spaced) {
+      expect(page.lines.length).toBeLessThanOrEqual(27); // 648 / 24
+    }
+  });
 });

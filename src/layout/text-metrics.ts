@@ -1,4 +1,5 @@
 import { globalFontMetrics, type FontMetricsRegistry, type FontVariantMatch } from '../fonts/font-metrics-registry.js';
+import { fromPx } from '../units/length.js';
 import type { TextStyle } from '../types/style.js';
 
 /**
@@ -16,8 +17,10 @@ export interface TextMetricsMeasurer {
   measureText(text: string, style?: TextStyle): TextMetricsResult;
 }
 
-/** CSS px per pt: 1 in = 96 px = 72 pt. */
-const PX_PER_PT = 96 / 72;
+/**
+ * Canvas `measureText` reports CSS px while layout geometry is in points.
+ * Convert with `fromPx` (px * 72/96 at 96 DPI) — never the inverse.
+ */
 
 /**
  * Text measurer with a three-layer resolution chain (futures §5.2, roast v1 F6):
@@ -59,6 +62,12 @@ export class SimpleTextMetricsMeasurer implements TextMetricsMeasurer {
 
   /** Layer 1: real glyph advances from a parsed font face. */
   private measureWithParsedFont(text: string, fontSize: number, isBold: boolean, font: FontVariantMatch): TextMetricsResult {
+    // No usable cmap (or no space advance to substitute with): measuring
+    // here would sum silent zeros, so use the documented heuristic widths
+    // openly instead (F-TTFSILENT).
+    if (!font.metrics.cmapPresent || font.metrics.advanceOf(' ') === undefined) {
+      return this.measureWithHeuristic(text, fontSize, isBold);
+    }
     const emScale = fontSize / font.metrics.unitsPerEm;
     const boldFactor = isBold && font.matchedVariant === 'regular' ? 1.06 : 1.0;
 
@@ -85,9 +94,9 @@ export class SimpleTextMetricsMeasurer implements TextMetricsMeasurer {
     const fontString = `${isItalic ? 'italic ' : ''}${isBold ? 'bold ' : ''}${fontSize}pt "${fontFamily.replace(/"/g, '')}"`;
     canvas.font = fontString;
     const metrics = canvas.measureText(text);
-    const width = metrics.width * PX_PER_PT;
-    const ascent = Number.isFinite(metrics.fontBoundingBoxAscent) ? metrics.fontBoundingBoxAscent * PX_PER_PT : fontSize * 0.82;
-    const descent = Number.isFinite(metrics.fontBoundingBoxDescent) ? metrics.fontBoundingBoxDescent * PX_PER_PT : fontSize * 0.22;
+    const width = fromPx(metrics.width, 'pt');
+    const ascent = Number.isFinite(metrics.fontBoundingBoxAscent) ? fromPx(metrics.fontBoundingBoxAscent, 'pt') : fontSize * 0.82;
+    const descent = Number.isFinite(metrics.fontBoundingBoxDescent) ? fromPx(metrics.fontBoundingBoxDescent, 'pt') : fontSize * 0.22;
     return { width, height: ascent + descent, ascent, descent };
   }
 

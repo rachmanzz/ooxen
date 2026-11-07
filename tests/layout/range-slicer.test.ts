@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { getParagraphText, sliceParagraphRange } from '../../src/layout/range-slicer.js';
+import { coalesceRuns, getParagraphText, sliceParagraphRange } from '../../src/layout/range-slicer.js';
 import { StandardWmlBuilder } from '../../src/serializer/wml-builder.js';
 import type { DocumentNode, ParagraphNode } from '../../src/types/ast.js';
 
@@ -104,5 +104,41 @@ describe('Range Slicer & Run Splitting', () => {
     expect(xml).toContain('<w:b/>');
     expect(xml).toContain('<w:t>dunia</w:t>');
     expect(xml).toContain('<w:t xml:space="preserve"> yang indah</w:t>');
+  });
+});
+
+describe('Range Slicer media metadata (F-SLICEDROP)', () => {
+  const imageRun = () => ({
+    type: 'run' as const,
+    text: '',
+    image: { type: 'image' as const, widthPt: 100, heightPt: 50 },
+    hyperlink: { url: 'https://example.com' },
+    bookmarkName: 'mark',
+    field: 'PAGE',
+    isFootnoteRefMark: true,
+    segments: [{ type: 'text' as const, text: '' }],
+  });
+
+  it('should preserve run metadata on media runs when coalescing', () => {
+    const out = coalesceRuns([imageRun()]);
+    expect(out.length).toBe(1);
+    expect(out[0]?.hyperlink?.url).toBe('https://example.com');
+    expect(out[0]?.bookmarkName).toBe('mark');
+    expect(out[0]?.field).toBe('PAGE');
+    expect(out[0]?.isFootnoteRefMark).toBe(true);
+    expect(out[0]?.segments?.length).toBe(1);
+    expect(out[0]?.image).toBeDefined();
+  });
+
+  it('should keep a zero-width media run covered by the styled range', () => {
+    const paragraph: ParagraphNode = {
+      type: 'paragraph',
+      children: [{ type: 'run', text: 'ab' }, imageRun(), { type: 'run', text: 'cd' }],
+    };
+    const updated = sliceParagraphRange(paragraph, 1, 3, { bold: true });
+    const media = updated.children.filter((r) => r.image);
+    expect(media.length).toBe(1);
+    expect(media[0]?.hyperlink?.url).toBe('https://example.com');
+    expect(media[0]?.image).toBeDefined();
   });
 });

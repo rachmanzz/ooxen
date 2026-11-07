@@ -28,6 +28,7 @@ interface TestFontOptions {
   descender?: number;
   advances?: Array<[number, number]>; // [glyphId, advance]
   cmapEntries?: Array<[number, number]>; // [charCode, glyphId]
+  cmapFormat?: 4 | 0; // Mac-roman format 0 exercises the unsupported-cmap path
   weightClass?: number;
   familyName?: string;
 }
@@ -39,6 +40,7 @@ function buildTestFont(options: TestFontOptions = {}): Uint8Array {
     descender = -200,
     advances = [[0, 0], [1, 250], [2, 700], [3, 500]],
     cmapEntries = [[0x20, 1], [0x41, 2], [0x61, 3]],
+    cmapFormat = 4,
     weightClass = 400,
     familyName = 'TestFont',
   } = options;
@@ -76,7 +78,16 @@ function buildTestFont(options: TestFontOptions = {}): Uint8Array {
     ...segments.flatMap((s) => i16(s.delta)),
     ...segments.flatMap(() => u16(0)), // idRangeOffset = 0 → delta arithmetic
   ];
-  const cmap: number[] = [...u16(0), ...u16(1), ...u16(3), ...u16(1), ...u32(12), ...subtable];
+  const format0Subtable: number[] = [
+    ...u16(0),
+    ...u16(262),
+    ...u16(0),
+    ...Array.from({ length: 256 }, (_, code) => cmapEntries.find(([char]) => char === code)?.[1] ?? 0),
+  ];
+  const cmap: number[] =
+    cmapFormat === 0
+      ? [...u16(0), ...u16(1), ...u16(3), ...u16(1), ...u32(12), ...format0Subtable]
+      : [...u16(0), ...u16(1), ...u16(3), ...u16(1), ...u32(12), ...subtable];
 
   const os2: number[] = [...u16(4), ...i16(500), ...u16(weightClass), ...Array(76).fill(0)];
 
@@ -158,6 +169,19 @@ describe('TTF font metrics parser', () => {
   it('rejects non-sfnt data', () => {
     expect(() => parseTtf(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]))).toThrow('not a TrueType/OpenType');
   });
+
+  it('marks cmap-absent fonts instead of measuring silent zeros (F-TTFSILENT)', () => {
+    const font = parseTtf(buildTestFont({ cmapFormat: 0 }));
+    expect(font.cmapPresent).toBe(false);
+    expect(font.advanceOf('A')).toBeUndefined();
+    expect(parseTtf(buildTestFont()).cmapPresent).toBe(true);
+  });
+
+  it('throws on truncated table data instead of reading zeros (F-TTFSILENT)', () => {
+    const full = buildTestFont();
+    expect(() => parseTtf(full.slice(0, 40))).toThrow('truncated');
+    expect(() => parseTtf(full.slice(0, full.length - 10))).toThrow('truncated');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -229,6 +253,15 @@ describe('Font-aware text measurement', () => {
     expect(result.width).toBeCloseTo(6.8, 5); // 10 * 0.68 heuristic
   });
 
+  it('layer 3 — uses heuristic widths openly for cmap-less fonts (F-TTFSILENT)', () => {
+    const registry = new FontMetricsRegistry();
+    registry.register(buildTestFont({ cmapFormat: 0, familyName: 'NoCmap' }), 'NoCmap');
+    const measurer = new SimpleTextMetricsMeasurer(registry);
+    const result = measurer.measureText('A', { fontFamily: 'NoCmap', fontSizePt: 10 });
+    expect(result.width).toBeGreaterThan(0);
+    expect(result.width).toBeCloseTo(6.8, 5); // same openly-heuristic width
+  });
+
   it('measureTextWidth routes registered fonts through the chain', () => {
     const registry = globalFontMetrics;
     registry.register(buildTestFont(), 'ChainFont');
@@ -242,6 +275,52 @@ describe('Font-aware text measurement', () => {
 
   it('keeps the monospace fixed-advance approximation when no real font exists', () => {
     expect(measureTextWidth('ab', 10, false, 'Courier New')).toBeCloseTo(12, 5); // 2 * 10 * 0.6
+  });
+});
+
+describe('Canvas text measurement units', () => {
+  const realDocument = (globalThis as unknown as { document?: unknown }).document;
+
+  function stubCanvas(measured: { width: number; ascent: number; descent: number }) {
+    const fakeContext = {
+      font: '',
+      measureText: (_text: string) => ({
+        width: measured.width,
+        fontBoundingBoxAscent: measured.ascent,
+        fontBoundingBoxDescent: measured.descent,
+      }),
+    };
+    (globalThis as unknown as { document?: unknown }).document = {
+      createElement: (_tag: string) => ({ getContext: (_kind: string) => fakeContext }),
+    };
+    return fakeContext;
+  }
+
+  it('converts canvas CSS px back to layout pt (px * 72/96)', () => {
+    // 12pt body text renders at 16px; a 96px-wide run must measure 72pt.
+    const fake = stubCanvas({ width: 96, ascent: 76.8, descent: 19.2 });
+    try {
+      const measurer = new SimpleTextMetricsMeasurer(new FontMetricsRegistry());
+      const result = measurer.measureText('sample', { fontFamily: 'UnregisteredFace', fontSizePt: 12 });
+      expect(fake.font).toContain('12pt');
+      expect(result.width).toBeCloseTo(72, 5); // 96 * 72/96
+      expect(result.ascent).toBeCloseTo(57.6, 5); // 76.8 * 72/96
+      expect(result.descent).toBeCloseTo(14.4, 5); // 19.2 * 72/96
+      expect(result.height).toBeCloseTo(72, 5);
+    } finally {
+      (globalThis as unknown as { document?: unknown }).document = realDocument;
+    }
+  });
+
+  it('skips the canvas layer when no font family is set (heuristic)', () => {
+    stubCanvas({ width: 96, ascent: 76.8, descent: 19.2 });
+    try {
+      const measurer = new SimpleTextMetricsMeasurer(new FontMetricsRegistry());
+      const result = measurer.measureText('A', { fontSizePt: 10 });
+      expect(result.width).toBeCloseTo(6.8, 5); // heuristic, not 72pt
+    } finally {
+      (globalThis as unknown as { document?: unknown }).document = realDocument;
+    }
   });
 });
 
