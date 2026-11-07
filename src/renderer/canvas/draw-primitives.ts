@@ -4,6 +4,7 @@ import type { TabLeader, TextStyle } from '../../types/style.js';
 import type { BorderStyle, CellBox } from '../../layout/page-engine.js';
 import { measureTextWidth } from '../../layout/text-metrics.js';
 import type { CanvasTarget } from './canvas-target.js';
+import { getCachedBitmap } from './image-loader.js';
 
 /**
  * Primitive drawing routines onto CanvasTarget.
@@ -47,9 +48,15 @@ export class StandardDrawPrimitives implements DrawPrimitives {
       target.restore();
     }
 
-    // 2. Setup font and color
+    // 2. Setup font and color.
+    //
+    // The size is the point number in *px*, not a real `pt` font: layout
+    // advances are measured in points and consumed in a uniform point-space
+    // transform, so the canvas font's CSS-px advance must numerically equal
+    // the point advance. A real `pt` font renders glyphs 96/72 wider than
+    // the measured slots and overlaps every line (screenshot 2026-11-05).
     target.save();
-    target.font = `${isItalic ? 'italic ' : ''}${isBold ? 'bold ' : ''}${drawFontSize}pt ${fontFamily}`;
+    target.font = `${isItalic ? 'italic ' : ''}${isBold ? 'bold ' : ''}${drawFontSize}px ${fontFamily}`;
     target.fillStyle = color;
 
     // 3. Draw text at baseline (shifted for super/subscript)
@@ -147,22 +154,40 @@ export class StandardDrawPrimitives implements DrawPrimitives {
   }
 
   drawImage(target: CanvasTarget, image: ImageNode, x: number, y: number): void {
+    // A raw 2D context throws when handed a URL string, which used to
+    // abort the entire page render. Only decoded bitmaps (see
+    // preloadDocumentImages in image-loader.ts) reach target.drawImage;
+    // everything else falls back to the placeholder below.
     target.save();
-    if (target.drawImage && image.src) {
-      target.drawImage(image.src, x, y, image.widthPt, image.heightPt);
-    } else {
-      // Fallback placeholder rendering
+    try {
+      const bitmap = getCachedBitmap(image);
+      if (bitmap && target.drawImage) {
+        try {
+          target.drawImage(bitmap, x, y, image.widthPt, image.heightPt);
+          return;
+        } catch {
+          // Host cannot blit this bitmap — draw the placeholder instead.
+        }
+      }
+      // Fallback placeholder rendering. Prefer the short part name over the
+      // alt text: Word often stores the author's local source path in
+      // descr (e.g. "E:\...\cover.jpg"), which is useless inside the box.
+      const looksLikePath = (s: string): boolean => /[\\/]/.test(s) && /\.\w{2,4}$/.test(s);
+      const label =
+        image.name ??
+        (image.altText && !looksLikePath(image.altText) ? image.altText : undefined) ??
+        image.altText ??
+        '[Image]';
       target.fillStyle = '#F0F0F0';
       target.fillRect(x, y, image.widthPt, image.heightPt);
       target.strokeStyle = '#CCCCCC';
       target.lineWidth = 1;
       target.strokeRect(x, y, image.widthPt, image.heightPt);
-      if (image.altText || image.name) {
-        target.fillStyle = '#666666';
-        target.fillText(image.altText ?? image.name ?? '[Image]', x + 4, y + image.heightPt / 2);
-      }
+      target.fillStyle = '#666666';
+      target.fillText(label, x + 4, y + image.heightPt / 2);
+    } finally {
+      target.restore();
     }
-    target.restore();
   }
 
   drawLeader(target: CanvasTarget, leader: TabLeader, x: number, y: number, width: number, baseline: number, style?: TextStyle): void {
@@ -174,7 +199,9 @@ export class StandardDrawPrimitives implements DrawPrimitives {
 
     target.save();
     target.fillStyle = color;
-    target.font = `${fontSize}pt ${fontFamily}`;
+    // Same px-for-pt contract as drawText: leader dots must advance in the
+    // same units as the layout slots they are placed in.
+    target.font = `${fontSize}px ${fontFamily}`;
 
     if (leader === 'dot' || leader === 'middleDot') {
       const char = leader === 'middleDot' ? '·' : '.';

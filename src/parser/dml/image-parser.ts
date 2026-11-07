@@ -51,6 +51,28 @@ export function parseImageNode(node: XmlNode, imageResolver?: ImageResolver): Im
     let widthPt = cx > 0 ? emuToPt(cx) : 100;
     let heightPt = cy > 0 ? emuToPt(cy) : 100;
 
+    // Floating placement (wp:anchor positionH/positionV). Inline images
+    // carry no anchor and stay in the text flow.
+    let anchor: ImageNode['anchor'];
+    if (container.nodeName.toLowerCase().endsWith('anchor')) {
+      const posH = container.children.find((c) => c.nodeName.toLowerCase().endsWith('positionh'));
+      const posV = container.children.find((c) => c.nodeName.toLowerCase().endsWith('positionv'));
+      const offH = posH?.children.find((c) => c.nodeName.toLowerCase().endsWith('posoffset'));
+      const offV = posV?.children.find((c) => c.nodeName.toLowerCase().endsWith('posoffset'));
+      // Align-based positioning (F-ANCHOR): w:align replaces w:posOffset.
+      const alignH = posH?.children.find((c) => c.nodeName.toLowerCase().endsWith('align'))?.textContent.trim().toLowerCase();
+      const alignV = posV?.children.find((c) => c.nodeName.toLowerCase().endsWith('align'))?.textContent.trim().toLowerCase();
+      anchor = {
+        horizontalFrom: posH?.attributes['relativeFrom'] ?? posH?.attributes['relativefrom'] ?? 'column',
+        horizontalOffsetPt: emuToPt(Number.parseFloat(offH?.textContent ?? '0') || 0),
+        horizontalAlign: offH ? undefined : alignH || undefined,
+        verticalFrom: posV?.attributes['relativeFrom'] ?? posV?.attributes['relativefrom'] ?? 'paragraph',
+        verticalOffsetPt: emuToPt(Number.parseFloat(offV?.textContent ?? '0') || 0),
+        verticalAlign: offV ? undefined : alignV || undefined,
+        behindDoc: container.attributes['behindDoc'] === '1' || container.attributes['behinddoc'] === '1',
+      };
+    }
+
     // DocPr (metadata)
     const docPr = container.children.find((c) => c.nodeName.toLowerCase().endsWith('docpr'));
     const id = docPr?.attributes['id'];
@@ -106,12 +128,18 @@ export function parseImageNode(node: XmlNode, imageResolver?: ImageResolver): Im
       data,
       src,
       mimeType,
+      anchor,
     };
   }
 
   // 2. Legacy VML (<w:pict>)
   if (rootTag === 'pict') {
-    const shape = node.children.find((c) => c.nodeName.toLowerCase().endsWith('shape'));
+    // Imagedata hosts are not limited to v:shape — v:rect/v:oval/
+    // v:roundrect/etc. carry it the same way (F-VMLSDT).
+    const shape = node.children.find((c) => c.nodeName.toLowerCase().endsWith('shape')) ??
+      node.children.find((c) =>
+        c.children.some((g) => g.nodeName.toLowerCase().endsWith('imagedata')),
+      );
     const imagedata = shape?.children.find((c) => c.nodeName.toLowerCase().endsWith('imagedata')) ??
                       node.children.find((c) => c.nodeName.toLowerCase().endsWith('imagedata'));
 

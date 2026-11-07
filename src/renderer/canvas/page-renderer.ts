@@ -129,7 +129,13 @@ export class StandardPageRenderer implements PageRenderer {
 
   private renderLines(lines: LayoutLine[], target: CanvasTarget): void {
     for (const line of lines) {
-      for (const fragment of line.fragments) {
+      // Behind-document floats paint before text so content stays on top.
+      const ordered = [...line.fragments].sort((a, b) => {
+        const aBehind = a.image?.anchor?.behindDoc === true ? 0 : 1;
+        const bBehind = b.image?.anchor?.behindDoc === true ? 0 : 1;
+        return aBehind - bBehind;
+      });
+      for (const fragment of ordered) {
         const fragX = line.bounds.x + fragment.bounds.x;
         const fragY = line.bounds.y + fragment.bounds.y;
 
@@ -138,7 +144,14 @@ export class StandardPageRenderer implements PageRenderer {
         } else if (fragment.image) {
           this.primitives.drawImage(target, fragment.image, fragX, fragY);
         } else if (fragment.isTab) {
-          if (fragment.tabLeader && fragment.tabLeader !== 'none') {
+          if (fragment.barTab) {
+            // Bar tab stop: vertical rule spanning the line height.
+            this.primitives.drawRect(
+              target,
+              { x: fragX, y: line.bounds.y, width: 0.75, height: line.bounds.height },
+              fragment.style?.color ?? '#000000',
+            );
+          } else if (fragment.tabLeader && fragment.tabLeader !== 'none') {
             this.primitives.drawLeader(
               target,
               fragment.tabLeader,

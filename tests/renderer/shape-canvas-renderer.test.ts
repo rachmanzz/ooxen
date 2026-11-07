@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import type { DrawingShapeNode, PageLayout } from '../../src/index.js';
 import type { CanvasTarget } from '../../src/renderer/canvas/canvas-target.js';
 import { StandardDrawPrimitives } from '../../src/renderer/canvas/draw-primitives.js';
+import { cacheBitmap } from '../../src/renderer/canvas/image-loader.js';
 import { StandardPageRenderer } from '../../src/renderer/canvas/page-renderer.js';
 
 interface PathCall {
@@ -179,6 +180,17 @@ describe('Vector Shape Canvas Renderer', () => {
     const renderer = new StandardPageRenderer();
     const target = new FullMockCanvasTarget();
 
+    // Raw 2D contexts throw on URL strings, so only a preloaded bitmap
+    // may reach target.drawImage (see image-loader.ts).
+    const bitmap = { __fakeBitmap: true } as unknown as CanvasImageSource;
+    const imageNode = {
+      type: 'image',
+      widthPt: 120,
+      heightPt: 80,
+      src: 'data:image/png;base64,AQID',
+    } as const;
+    cacheBitmap(imageNode, bitmap);
+
     const page: PageLayout = {
       pageIndex: 0,
       pageNumber: 1,
@@ -192,12 +204,7 @@ describe('Vector Shape Canvas Renderer', () => {
           fragments: [
             {
               text: '',
-              image: {
-                type: 'image',
-                widthPt: 120,
-                heightPt: 80,
-                src: 'data:image/png;base64,AQID',
-              },
+              image: imageNode,
               bounds: { x: 0, y: 0, width: 120, height: 80 },
             },
           ],
@@ -209,7 +216,7 @@ describe('Vector Shape Canvas Renderer', () => {
 
     const drawImageCall = target.calls.find((c) => c.method === 'drawImage');
     expect(drawImageCall).toBeDefined();
-    expect(drawImageCall?.args[0]).toBe('data:image/png;base64,AQID');
+    expect(drawImageCall?.args[0]).toBe(bitmap);
     expect(drawImageCall?.args[1]).toBe(72);
     expect(drawImageCall?.args[2]).toBe(72);
     expect(drawImageCall?.args[3]).toBe(120);

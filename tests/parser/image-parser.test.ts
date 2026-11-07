@@ -26,6 +26,60 @@ describe('Image & Binary Media Parser', () => {
     expect(guessMimeType('vector.svg')).toBe('image/svg+xml');
   });
 
+  it('should parse wp:anchor offsets and behindDoc flag', () => {
+    const xml = `
+      <w:drawing xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                 xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                 xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                 xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"
+                 xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+        <wp:anchor behindDoc="0">
+          <wp:positionH relativeFrom="column"><wp:posOffset>28576</wp:posOffset></wp:positionH>
+          <wp:positionV relativeFrom="paragraph"><wp:posOffset>66675</wp:posOffset></wp:positionV>
+          <wp:extent cx="1905000" cy="1270000"/>
+          <wp:docPr id="11" name="Float.png"/>
+          <a:graphic>
+            <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+              <pic:pic>
+                <pic:nvPicPr><pic:cNvPr id="0" name="Float.png"/></pic:nvPicPr>
+                <pic:blipFill><a:blip r:embed="rId9"/></pic:blipFill>
+              </pic:pic>
+            </a:graphicData>
+          </a:graphic>
+        </wp:anchor>
+      </w:drawing>`;
+    const node = parseImageNode(defaultXmlAdapter.parse(xml), { resolveImage: () => undefined });
+    expect(node?.anchor?.horizontalFrom).toBe('column');
+    expect(node?.anchor?.horizontalOffsetPt).toBeCloseTo(28576 / 12700, 5);
+    expect(node?.anchor?.verticalFrom).toBe('paragraph');
+    expect(node?.anchor?.verticalOffsetPt).toBeCloseTo(66675 / 12700, 5);
+    expect(node?.anchor?.behindDoc).toBe(false);
+  });
+
+  it('should leave inline images without an anchor', () => {
+    const xml = `
+      <w:drawing xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                 xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                 xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                 xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"
+                 xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+        <wp:inline>
+          <wp:extent cx="1905000" cy="1270000"/>
+          <wp:docPr id="10" name="Inline.png"/>
+          <a:graphic>
+            <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+              <pic:pic>
+                <pic:nvPicPr><pic:cNvPr id="0" name="Inline.png"/></pic:nvPicPr>
+                <pic:blipFill><a:blip r:embed="rId9"/></pic:blipFill>
+              </pic:pic>
+            </a:graphicData>
+          </a:graphic>
+        </wp:inline>
+      </w:drawing>`;
+    const node = parseImageNode(defaultXmlAdapter.parse(xml), { resolveImage: () => undefined });
+    expect(node?.anchor).toBeUndefined();
+  });
+
   it('should parse DrawingML pic:pic element and resolve binary media', () => {
     const xml = `
       <w:drawing xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -100,4 +154,33 @@ describe('Image & Binary Media Parser', () => {
     expect(imageNode?.relationshipId).toBe('rIdVmlImg');
     expect(imageNode?.altText).toBe('Vintage');
   });
+
+  it('should parse align-based anchor positions instead of pinning to origin', () => {
+    const xml = `
+      <w:drawing xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                 xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                 xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                 xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"
+                 xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+        <wp:anchor behindDoc="1">
+          <wp:positionH relativeFrom="column"><w:align>center</w:align></wp:positionH>
+          <wp:positionV relativeFrom="paragraph"><w:align>bottom</w:align></wp:positionV>
+          <wp:extent cx="1905000" cy="1270000"/>
+          <wp:docPr id="12" name="Align.png"/>
+          <a:graphic>
+            <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+              <pic:pic>
+                <pic:nvPicPr><pic:cNvPr id="0" name="Align.png"/></pic:nvPicPr>
+                <pic:blipFill><a:blip r:embed="rId9"/></a:blipFill>
+              </pic:pic>
+            </a:graphicData>
+          </a:graphic>
+        </wp:anchor>
+      </w:drawing>`;
+    const node = parseImageNode(defaultXmlAdapter.parse(xml), { resolveImage: () => undefined });
+    expect(node?.anchor?.horizontalAlign).toBe('center');
+    expect(node?.anchor?.verticalAlign).toBe('bottom');
+    expect(node?.anchor?.behindDoc).toBe(true);
+  });
+
 });
