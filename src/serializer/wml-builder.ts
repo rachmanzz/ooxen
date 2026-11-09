@@ -1,4 +1,5 @@
 import type {
+  BlockNode,
   CommentNode,
   DocumentNode,
   DrawingShapeNode,
@@ -94,12 +95,14 @@ export interface WmlBuilder {
   buildDocumentXml(
     document: DocumentNode,
     headerFooterRelIds?: Map<HeaderFooterNode, string>,
-    hyperlinkRelIds?: Map<string, string>,
+    hyperlinkRelIds?: ReadonlyMap<string, string>,
   ): string;
-  buildHeaderXml(header: HeaderFooterNode, hyperlinkRelIds?: Map<string, string>): string;
-  buildFooterXml(footer: HeaderFooterNode, hyperlinkRelIds?: Map<string, string>): string;
-  buildParagraphXml(paragraph: ParagraphNode, hyperlinkRelIds?: Map<string, string>): string;
-  buildTableXml(table: TableNode, hyperlinkRelIds?: Map<string, string>): string;
+  buildHeaderXml(header: HeaderFooterNode, hyperlinkRelIds?: ReadonlyMap<string, string>): string;
+  buildFooterXml(footer: HeaderFooterNode, hyperlinkRelIds?: ReadonlyMap<string, string>): string;
+  buildParagraphXml(paragraph: ParagraphNode, hyperlinkRelIds?: ReadonlyMap<string, string>): string;
+  buildTableXml(table: TableNode, hyperlinkRelIds?: ReadonlyMap<string, string>): string;
+  /** Serializes any block node (used by notes builders for mixed content). */
+  buildBlockXml(block: BlockNode, hyperlinkRelIds?: ReadonlyMap<string, string>): string;
 }
 
 export class StandardWmlBuilder implements WmlBuilder {
@@ -109,7 +112,7 @@ export class StandardWmlBuilder implements WmlBuilder {
   buildDocumentXml(
     document: DocumentNode,
     headerFooterRelIds?: Map<HeaderFooterNode, string>,
-    hyperlinkRelIds?: Map<string, string>,
+    hyperlinkRelIds?: ReadonlyMap<string, string>,
   ): string {
     this.commentIdScope = document.comments ?? [];
     const lines: string[] = [
@@ -155,7 +158,7 @@ export class StandardWmlBuilder implements WmlBuilder {
     return lines.join('\n');
   }
 
-  buildHeaderXml(header: HeaderFooterNode, hyperlinkRelIds?: Map<string, string>): string {
+  buildHeaderXml(header: HeaderFooterNode, hyperlinkRelIds?: ReadonlyMap<string, string>): string {
     const lines: string[] = [
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
       '<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">',
@@ -181,7 +184,7 @@ export class StandardWmlBuilder implements WmlBuilder {
     return lines.join('\n');
   }
 
-  buildFooterXml(footer: HeaderFooterNode, hyperlinkRelIds?: Map<string, string>): string {
+  buildFooterXml(footer: HeaderFooterNode, hyperlinkRelIds?: ReadonlyMap<string, string>): string {
     const lines: string[] = [
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
       '<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">',
@@ -207,15 +210,15 @@ export class StandardWmlBuilder implements WmlBuilder {
     return lines.join('\n');
   }
 
-  buildParagraphXml(paragraph: ParagraphNode, hyperlinkRelIds?: Map<string, string>): string {
+  buildParagraphXml(paragraph: ParagraphNode, hyperlinkRelIds?: ReadonlyMap<string, string>): string {
     return this.serializeParagraph(paragraph, hyperlinkRelIds);
   }
 
-  buildTableXml(table: TableNode, hyperlinkRelIds?: Map<string, string>): string {
+  buildTableXml(table: TableNode, hyperlinkRelIds?: ReadonlyMap<string, string>): string {
     return this.serializeTable(table, hyperlinkRelIds);
   }
 
-  private serializeParagraph(p: ParagraphNode, hyperlinkRelIds?: Map<string, string>): string {
+  private serializeParagraph(p: ParagraphNode, hyperlinkRelIds?: ReadonlyMap<string, string>): string {
     const pPr = this.serializeParagraphProperties(p.style);
     const content = this.serializeParagraphContent(p, hyperlinkRelIds);
 
@@ -226,7 +229,7 @@ export class StandardWmlBuilder implements WmlBuilder {
     return ['    <w:p>', pPr, content, '    </w:p>'].filter(Boolean).join('\n');
   }
 
-  private serializeParagraphContent(p: ParagraphNode, hyperlinkRelIds?: Map<string, string>): string {
+  private serializeParagraphContent(p: ParagraphNode, hyperlinkRelIds?: ReadonlyMap<string, string>): string {
     const pieces: string[] = [];
     const runs = p.children;
     let i = 0;
@@ -278,7 +281,7 @@ export class StandardWmlBuilder implements WmlBuilder {
     return content;
   }
 
-  private serializeRunsGroup(runs: RunNode[], hyperlinkRelIds?: Map<string, string>): string {
+  private serializeRunsGroup(runs: RunNode[], hyperlinkRelIds?: ReadonlyMap<string, string>): string {
     const pieces: string[] = [];
     let i = 0;
 
@@ -317,7 +320,7 @@ export class StandardWmlBuilder implements WmlBuilder {
     runs: RunNode[],
     startIndex: number,
     setIndex: (nextIndex: number) => void,
-    hyperlinkRelIds?: Map<string, string>,
+    hyperlinkRelIds?: ReadonlyMap<string, string>,
   ): string {
     let i = startIndex;
     const run = runs[i]!;
@@ -356,7 +359,7 @@ export class StandardWmlBuilder implements WmlBuilder {
     return innerRuns;
   }
 
-  private serializeRunsGroupWithoutRevision(runs: RunNode[], hyperlinkRelIds?: Map<string, string>): string {
+  private serializeRunsGroupWithoutRevision(runs: RunNode[], hyperlinkRelIds?: ReadonlyMap<string, string>): string {
     const pieces: string[] = [];
     let i = 0;
     while (i < runs.length) {
@@ -447,7 +450,7 @@ export class StandardWmlBuilder implements WmlBuilder {
     return ['      <w:pPr>', ...inner, '      </w:pPr>'].join('\n');
   }
 
-  private serializeRun(r: RunNode, hyperlinkRelIds?: Map<string, string>): string {
+  private serializeRun(r: RunNode, hyperlinkRelIds?: ReadonlyMap<string, string>): string {
     const rPr = this.serializeRunProperties(r.style);
     const textPieces: string[] = [];
     const textTag = r.revision?.type === 'delete' ? 'w:delText' : 'w:t';
@@ -549,8 +552,63 @@ export class StandardWmlBuilder implements WmlBuilder {
     const cy = Math.round(ptToEmu(image.heightPt));
     const id = image.id ?? '1';
     const name = image.name ?? 'Picture 1';
-    const relId = image.relationshipId ?? 'rIdImage';
     const altText = image.altText ?? name;
+
+    // The writer assigns relationshipId only when it can back it: embedded
+    // data (or a data: URL) or a remote http(s) src. Anything else leaves
+    // the id unset so we emit a bare blip instead of a dangling r:embed
+    // (F-WIMG-SRC). A remote src becomes r:link with the External rel the
+    // writer recorded on the owner part.
+    const hasEmbedData = !!image.data || !!image.src?.startsWith('data:');
+    const relId = image.relationshipId;
+    const blip = !relId
+      ? '                    <a:blip/>'
+      : hasEmbedData
+        ? `                    <a:blip r:embed="${escapeXml(relId)}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>`
+        : `                    <a:blip r:link="${escapeXml(relId)}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>`;
+
+    const anchor = image.anchor;
+    if (anchor) {
+      const posH = anchor.horizontalAlign
+        ? `<wp:align>${escapeXml(anchor.horizontalAlign)}</wp:align>`
+        : `<wp:posOffset>${Math.round(ptToEmu(anchor.horizontalOffsetPt))}</wp:posOffset>`;
+      const posV = anchor.verticalAlign
+        ? `<wp:align>${escapeXml(anchor.verticalAlign)}</wp:align>`
+        : `<wp:posOffset>${Math.round(ptToEmu(anchor.verticalOffsetPt))}</wp:posOffset>`;
+      const behindDoc = anchor.behindDoc ? ' behindDoc="1"' : '';
+      return [
+        '        <w:drawing>',
+        `          <wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="0"${behindDoc} locked="0" layoutInCell="1" allowOverlap="1">`,
+        '            <wp:simplePos x="0" y="0"/>',
+        `            <wp:positionH relativeFrom="${escapeXml(anchor.horizontalFrom)}">${posH}</wp:positionH>`,
+        `            <wp:positionV relativeFrom="${escapeXml(anchor.verticalFrom)}">${posV}</wp:positionV>`,
+        `            <wp:extent cx="${cx}" cy="${cy}"/>`,
+        `            <wp:docPr id="${escapeXml(id)}" name="${escapeXml(name)}" descr="${escapeXml(altText)}"/>`,
+        '            <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">',
+        '              <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">',
+        '                <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">',
+        '                  <pic:nvPicPr>',
+        `                    <pic:cNvPr id="0" name="${escapeXml(name)}" descr="${escapeXml(altText)}"/>`,
+        '                    <pic:cNvPicPr/>',
+        '                  </pic:nvPicPr>',
+        '                  <pic:blipFill>',
+        blip,
+        '                    <a:stretch><a:fillRect/></a:stretch>',
+        '                  </pic:blipFill>',
+        '                  <pic:spPr>',
+        '                    <a:xfrm>',
+        '                      <a:off x="0" y="0"/>',
+        `                      <a:ext cx="${cx}" cy="${cy}"/>`,
+        '                    </a:xfrm>',
+        '                    <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>',
+        '                  </pic:spPr>',
+        '                </pic:pic>',
+        '              </a:graphicData>',
+        '            </a:graphic>',
+        '          </wp:anchor>',
+        '        </w:drawing>',
+      ].join('\n');
+    }
 
     return [
       '        <w:drawing>',
@@ -565,7 +623,7 @@ export class StandardWmlBuilder implements WmlBuilder {
       '                    <pic:cNvPicPr/>',
       '                  </pic:nvPicPr>',
       '                  <pic:blipFill>',
-      `                    <a:blip r:embed="${escapeXml(relId)}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>`,
+      blip,
       '                    <a:stretch><a:fillRect/></a:stretch>',
       '                  </pic:blipFill>',
       '                  <pic:spPr>',
@@ -593,7 +651,7 @@ export class StandardWmlBuilder implements WmlBuilder {
     ].join('\n');
   }
 
-  private serializeDrawing(shape: DrawingShapeNode, hyperlinkRelIds?: Map<string, string>): string {
+  private serializeDrawing(shape: DrawingShapeNode, hyperlinkRelIds?: ReadonlyMap<string, string>): string {
     const cx = Math.round(shape.widthPt * 12700);
     const cy = Math.round(shape.heightPt * 12700);
     const id = shape.id ?? '1';
@@ -645,11 +703,29 @@ export class StandardWmlBuilder implements WmlBuilder {
           ].join('\n')
         : '';
 
+    // Floating shapes keep their wp:anchor placement on round-trip;
+    // without it every anchored banner would demote to inline (F-ANCHOR).
+    const shapeAnchor = shape.anchor;
+    const anchorOpen = shapeAnchor
+      ? [
+          '        <w:drawing>',
+          `          <wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="0"${shapeAnchor.behindDoc ? ' behindDoc="1"' : ''} locked="0" layoutInCell="1" allowOverlap="1">`,
+          '            <wp:simplePos x="0" y="0"/>',
+          `            <wp:positionH relativeFrom="${escapeXml(shapeAnchor.horizontalFrom)}">${shapeAnchor.horizontalAlign ? `<wp:align>${escapeXml(shapeAnchor.horizontalAlign)}</wp:align>` : `<wp:posOffset>${Math.round(ptToEmu(shapeAnchor.horizontalOffsetPt))}</wp:posOffset>`}</wp:positionH>`,
+          `            <wp:positionV relativeFrom="${escapeXml(shapeAnchor.verticalFrom)}">${shapeAnchor.verticalAlign ? `<wp:align>${escapeXml(shapeAnchor.verticalAlign)}</wp:align>` : `<wp:posOffset>${Math.round(ptToEmu(shapeAnchor.verticalOffsetPt))}</wp:posOffset>`}</wp:positionV>`,
+          `            <wp:extent cx="${cx}" cy="${cy}"/>`,
+          `            <wp:docPr id="${escapeXml(id)}" name="${escapeXml(name)}"/>`,
+        ]
+      : [
+          '        <w:drawing>',
+          '          <wp:inline>',
+          `            <wp:extent cx="${cx}" cy="${cy}"/>`,
+          `            <wp:docPr id="${escapeXml(id)}" name="${escapeXml(name)}"/>`,
+        ];
+    const anchorClose = shapeAnchor ? '          </wp:anchor>' : '          </wp:inline>';
+
     return [
-      '        <w:drawing>',
-      '          <wp:inline>',
-      `            <wp:extent cx="${cx}" cy="${cy}"/>`,
-      `            <wp:docPr id="${escapeXml(id)}" name="${escapeXml(name)}"/>`,
+      ...anchorOpen,
       '            <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">',
       '              <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">',
       '                <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">',
@@ -672,12 +748,25 @@ export class StandardWmlBuilder implements WmlBuilder {
       '                </wps:wsp>',
       '              </a:graphicData>',
       '            </a:graphic>',
-      '          </wp:inline>',
-      '        </w:drawing>',
+      anchorClose,
+      '        </w:drawing>'
     ].filter(Boolean).join('\n');
   }
 
-  private serializeBlockDrawing(shape: DrawingShapeNode, hyperlinkRelIds?: Map<string, string>): string {
+  buildBlockXml(block: BlockNode, hyperlinkRelIds?: ReadonlyMap<string, string>): string {
+    switch (block.type) {
+      case 'paragraph':
+        return this.buildParagraphXml(block, hyperlinkRelIds);
+      case 'table':
+        return this.buildTableXml(block, hyperlinkRelIds);
+      case 'image':
+        return this.serializeBlockImage(block);
+      case 'drawing':
+        return this.serializeBlockDrawing(block, hyperlinkRelIds);
+    }
+  }
+
+  private serializeBlockDrawing(shape: DrawingShapeNode, hyperlinkRelIds?: ReadonlyMap<string, string>): string {
     return [
       '    <w:p>',
       '      <w:r>',
@@ -716,7 +805,7 @@ export class StandardWmlBuilder implements WmlBuilder {
     return ['        <w:rPr>', ...inner, '        </w:rPr>'].join('\n');
   }
 
-  private serializeTable(table: TableNode, hyperlinkRelIds?: Map<string, string>): string {
+  private serializeTable(table: TableNode, hyperlinkRelIds?: ReadonlyMap<string, string>): string {
     const tblPr = this.serializeTableProperties(table.style);
     let tblGrid = '';
     if (table.columnWidthsPt && table.columnWidthsPt.length > 0) {
@@ -813,7 +902,7 @@ export class StandardWmlBuilder implements WmlBuilder {
     return `${indent}<w:${tag} w:val="${borderType}" w:sz="${sz}" w:space="0" w:color="${borderCol}"/>`;
   }
 
-  private serializeTableRow(row: TableRowNode, hyperlinkRelIds?: Map<string, string>): string {
+  private serializeTableRow(row: TableRowNode, hyperlinkRelIds?: ReadonlyMap<string, string>): string {
     const trPr = this.serializeTableRowProperties(row);
     const cells = row.children.map((cell) => this.serializeTableCell(cell, hyperlinkRelIds)).join('\n');
     return ['      <w:tr>', trPr, cells, '      </w:tr>'].filter(Boolean).join('\n');
@@ -836,7 +925,7 @@ export class StandardWmlBuilder implements WmlBuilder {
     return ['        <w:trPr>', ...inner, '        </w:trPr>'].join('\n');
   }
 
-  private serializeTableCell(cell: TableCellNode, hyperlinkRelIds?: Map<string, string>): string {
+  private serializeTableCell(cell: TableCellNode, hyperlinkRelIds?: ReadonlyMap<string, string>): string {
     const tcPr = this.serializeTableCellProperties(cell);
     const content = cell.children
       .map((child) => {

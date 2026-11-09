@@ -6,7 +6,7 @@ import { commentNumericId, defaultWmlBuilder, escapeXml, type WmlBuilder } from 
  */
 
 export interface CommentBuilder {
-  buildCommentsXml(comments: CommentNode[]): string;
+  buildCommentsXml(comments: CommentNode[], hyperlinkRelIds?: ReadonlyMap<string, string>): string;
 }
 
 export class StandardCommentBuilder implements CommentBuilder {
@@ -16,7 +16,7 @@ export class StandardCommentBuilder implements CommentBuilder {
     this.wmlBuilder = wmlBuilder;
   }
 
-  buildCommentsXml(comments: CommentNode[]): string {
+  buildCommentsXml(comments: CommentNode[], hyperlinkRelIds?: ReadonlyMap<string, string>): string {
     const commentElements = comments
       .map((comment) => {
         const authorAttr = comment.author ? ` w:author="${escapeXml(comment.author)}"` : '';
@@ -24,12 +24,7 @@ export class StandardCommentBuilder implements CommentBuilder {
         const initialsAttr = comment.initials ? ` w:initials="${escapeXml(comment.initials)}"` : '';
 
         const paragraphs = comment.children
-          .map((child) => {
-            if (child.type === 'paragraph') {
-              return this.wmlBuilder.buildParagraphXml(child);
-            }
-            return '    <w:p/>';
-          })
+          .map((child) => this.wmlBuilder.buildBlockXml(child, hyperlinkRelIds))
           .join('\n');
 
         return `  <w:comment w:id="${commentNumericId(comments, comment.id)}"${authorAttr}${dateAttr}${initialsAttr}>\n${paragraphs}\n  </w:comment>`;
@@ -49,6 +44,6 @@ export class StandardCommentBuilder implements CommentBuilder {
 
 export const defaultCommentBuilder = new StandardCommentBuilder();
 
-export function buildCommentsXml(comments: CommentNode[]): string {
-  return defaultCommentBuilder.buildCommentsXml(comments);
+export function buildCommentsXml(comments: CommentNode[], hyperlinkRelIds?: ReadonlyMap<string, string>): string {
+  return defaultCommentBuilder.buildCommentsXml(comments, hyperlinkRelIds);
 }

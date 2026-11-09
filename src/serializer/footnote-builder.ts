@@ -5,8 +5,8 @@ import { defaultWmlBuilder, type WmlBuilder } from './wml-builder.js';
  * Builds ISO/IEC 29500-1 WordprocessingML Footnotes (word/footnotes.xml) and Endnotes (word/endnotes.xml).
  */
 export interface FootnoteBuilder {
-  buildFootnotesXml(footnotes: FootnoteNode[], hyperlinkRelIds?: Map<string, string>): string;
-  buildEndnotesXml(endnotes: FootnoteNode[], hyperlinkRelIds?: Map<string, string>): string;
+  buildFootnotesXml(footnotes: FootnoteNode[], hyperlinkRelIds?: ReadonlyMap<string, string>): string;
+  buildEndnotesXml(endnotes: FootnoteNode[], hyperlinkRelIds?: ReadonlyMap<string, string>): string;
 }
 
 export class StandardFootnoteBuilder implements FootnoteBuilder {
@@ -16,7 +16,7 @@ export class StandardFootnoteBuilder implements FootnoteBuilder {
     this.wmlBuilder = wmlBuilder;
   }
 
-  buildFootnotesXml(footnotes: FootnoteNode[], hyperlinkRelIds?: Map<string, string>): string {
+  buildFootnotesXml(footnotes: FootnoteNode[], hyperlinkRelIds?: ReadonlyMap<string, string>): string {
     const lines: string[] = [
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
       '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">',
@@ -38,11 +38,7 @@ export class StandardFootnoteBuilder implements FootnoteBuilder {
       const typeAttr = fn.typeCategory && fn.typeCategory !== 'normal' ? ` w:type="${fn.typeCategory}"` : '';
       lines.push(`  <w:footnote w:id="${fn.id}"${typeAttr}>`);
       for (const block of fn.children) {
-        if (block.type === 'paragraph') {
-          lines.push(this.wmlBuilder.buildParagraphXml(block, hyperlinkRelIds));
-        } else if (block.type === 'table') {
-          lines.push(this.wmlBuilder.buildTableXml(block, hyperlinkRelIds));
-        }
+        lines.push(this.wmlBuilder.buildBlockXml(block, hyperlinkRelIds));
       }
       lines.push('  </w:footnote>');
     }
@@ -51,7 +47,7 @@ export class StandardFootnoteBuilder implements FootnoteBuilder {
     return lines.join('\n');
   }
 
-  buildEndnotesXml(endnotes: FootnoteNode[], hyperlinkRelIds?: Map<string, string>): string {
+  buildEndnotesXml(endnotes: FootnoteNode[], hyperlinkRelIds?: ReadonlyMap<string, string>): string {
     const lines: string[] = [
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
       '<w:endnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">',
@@ -70,11 +66,7 @@ export class StandardFootnoteBuilder implements FootnoteBuilder {
       const typeAttr = en.typeCategory && en.typeCategory !== 'normal' ? ` w:type="${en.typeCategory}"` : '';
       lines.push(`  <w:endnote w:id="${en.id}"${typeAttr}>`);
       for (const block of en.children) {
-        if (block.type === 'paragraph') {
-          lines.push(this.wmlBuilder.buildParagraphXml(block, hyperlinkRelIds));
-        } else if (block.type === 'table') {
-          lines.push(this.wmlBuilder.buildTableXml(block, hyperlinkRelIds));
-        }
+        lines.push(this.wmlBuilder.buildBlockXml(block, hyperlinkRelIds));
       }
       lines.push('  </w:endnote>');
     }

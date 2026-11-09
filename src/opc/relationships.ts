@@ -11,6 +11,12 @@ export interface OpcRelationship {
   type: string;
   target: string;
   targetMode?: RelationshipTargetMode;
+  /**
+   * Owning part for serializer-collected relationships (media, external
+   * hyperlinks): the rel is emitted in this part's .rels file instead of
+   * the default `word/document.xml`. Ignored by rel serialization itself.
+   */
+  ownerPart?: string;
 }
 
 export const RELATIONSHIPS_NAMESPACE = 'http://schemas.openxmlformats.org/package/2006/relationships';

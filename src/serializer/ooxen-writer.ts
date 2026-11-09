@@ -59,15 +59,13 @@ export class StandardOoxenWriter implements OoxenWriter {
     let imgCounter = 1;
     let mediaCounter = 1;
 
-    const processImage = (img: ImageNode): void => {
-      // Always allocate a fresh relationship id and a unique part name
-      // (v2 N1/N2). Preset ids from a parsed package ("rId2", "rId5", ...)
-      // must not be reused: they can collide with the builder's own
-      // relationship ids, and reusing one id would collapse distinct images
-      // into a single overwritten media part.
-      const relId = `rIdImg${imgCounter++}`;
-      img.relationshipId = relId;
+    // Media and hyperlink relationships are owned by the part whose XML
+    // references them (F-WIMG-HDR, F-WNOTE-SCAN): the same image or URL
+    // used in two parts reuses its id but gets a rel entry in each part.
+    const seenImages = new Map<ImageNode, { relId: string; partName?: string; mimeType?: string }>();
+    const seenLinkOwners = new Set<string>();
 
+    const processImage = (img: ImageNode, ownerPart: string): void => {
       let rawData: Uint8Array | undefined = img.data;
       let mimeType = img.mimeType || 'image/png';
 
@@ -79,31 +77,69 @@ export class StandardOoxenWriter implements OoxenWriter {
         }
       }
 
+      const seen = seenImages.get(img);
       if (rawData) {
+        // Always allocate a fresh relationship id and a unique part name
+        // (v2 N1/N2). Preset ids from a parsed package ("rId2", "rId5", ...)
+        // must not be reused: they can collide with the builder's own
+        // relationship ids, and reusing one id would collapse distinct images
+        // into a single overwritten media part.
+        const relId = seen?.relId ?? `rIdImg${imgCounter++}`;
+        img.relationshipId = relId;
         const ext = mimeType.replace(/^image\//, '').replace(/\+xml$/, '') || 'png';
-        const partName = `word/media/image${mediaCounter++}.${ext}`;
-        mediaParts.push({
-          partName,
-          relationshipId: relId,
-          contentType: mimeType,
-          data: rawData,
-        });
+        const partName = seen?.partName ?? `word/media/image${mediaCounter++}.${ext}`;
+        seenImages.set(img, { relId, partName, mimeType });
+        mediaParts.push({ partName, relationshipId: relId, contentType: mimeType, data: rawData, ownerPart });
+        return;
       }
+
+      if (img.src?.startsWith('http')) {
+        // Externally-linked image (r:link): no media part, but the owner
+        // part still needs the External rel (F-WIMG-SRC).
+        const relId = seen?.relId ?? `rIdImg${imgCounter++}`;
+        img.relationshipId = relId;
+        seenImages.set(img, { relId });
+        const ownerKey = `${ownerPart}${relId}`;
+        if (!seenLinkOwners.has(ownerKey)) {
+          seenLinkOwners.add(ownerKey);
+          externalRelationships.push({
+            id: relId,
+            type: KNOWN_RELATIONSHIPS.IMAGE,
+            target: img.src,
+            targetMode: 'External',
+            ownerPart,
+          });
+        }
+        return;
+      }
+
+      // No data and no resolvable src: leave relationshipId unset so the
+      // serializer emits a bare blip instead of a dangling r:embed
+      // (F-WIMG-SRC). A preset id from a parsed package must not survive:
+      // it would reference a rel that no longer exists.
+      img.relationshipId = undefined;
     };
 
     const externalRelationships: OpcRelationship[] = [];
     const hyperlinkRelIds = new Map<string, string>();
     let linkCounter = 1;
 
-    const processHyperlink = (url?: string): void => {
-      if (url && !hyperlinkRelIds.has(url)) {
-        const relId = `rIdLink${linkCounter++}`;
+    const processHyperlink = (url: string | undefined, ownerPart: string): void => {
+      if (!url) return;
+      let relId = hyperlinkRelIds.get(url);
+      if (!relId) {
+        relId = `rIdLink${linkCounter++}`;
         hyperlinkRelIds.set(url, relId);
+      }
+      const ownerKey = `${ownerPart}${relId}`;
+      if (!seenLinkOwners.has(ownerKey)) {
+        seenLinkOwners.add(ownerKey);
         externalRelationships.push({
           id: relId,
           type: KNOWN_RELATIONSHIPS.HYPERLINK,
           target: url,
           targetMode: 'External',
+          ownerPart,
         });
       }
     };
@@ -113,23 +149,28 @@ export class StandardOoxenWriter implements OoxenWriter {
     // built-in 1/2 instead of emitting dangling refs (F-NUMDANGLE).
     const requiredNumIds = new Map<number, string | undefined>();
 
-    const traverseBlock = (block: BlockNode): void => {
+    const traverseBlock = (block: BlockNode, ownerPart: string): void => {
       if (block.type === 'image') {
-        processImage(block);
+        processImage(block, ownerPart);
+      } else if (block.type === 'drawing') {
+        // Images/hyperlinks inside a shape's textbox paragraphs belong to
+        // the same owner part (F-WTXBX-MEDIA).
+        for (const para of block.textbox ?? []) traverseBlock(para, ownerPart);
       } else if (block.type === 'paragraph') {
         const numId = block.style?.numbering?.numId;
         if (numId !== undefined) {
           requiredNumIds.set(numId, block.style?.numbering?.format);
         }
         for (const r of block.children) {
-          if (r.image) processImage(r.image);
-          if (r.hyperlink?.url) processHyperlink(r.hyperlink.url);
+          if (r.image) processImage(r.image, ownerPart);
+          if (r.drawing) traverseBlock(r.drawing, ownerPart);
+          if (r.hyperlink?.url) processHyperlink(r.hyperlink.url, ownerPart);
         }
       } else if (block.type === 'table') {
         for (const row of block.rows) {
           for (const cell of row.children) {
             for (const child of cell.children) {
-              traverseBlock(child);
+              traverseBlock(child, ownerPart);
             }
           }
         }
@@ -143,16 +184,16 @@ export class StandardOoxenWriter implements OoxenWriter {
 
     for (const section of doc.sections) {
       for (const block of section.children) {
-        traverseBlock(block);
+        traverseBlock(block, 'word/document.xml');
       }
 
       if (section.headers) {
         for (const kind of ['default', 'first', 'even'] as const) {
           const node = section.headers[kind];
           if (node && !headerFooterRelIds.has(node)) {
-            for (const b of node.children) traverseBlock(b);
-            const relId = `rIdHdr${hdrCounter}`;
             const partName = `word/header${hdrCounter}.xml`;
+            for (const b of node.children) traverseBlock(b, partName);
+            const relId = `rIdHdr${hdrCounter}`;
             hdrCounter++;
             headerFooterRelIds.set(node, relId);
             const xml = this.wmlBuilder.buildHeaderXml(node, hyperlinkRelIds);
@@ -170,9 +211,9 @@ export class StandardOoxenWriter implements OoxenWriter {
         for (const kind of ['default', 'first', 'even'] as const) {
           const node = section.footers[kind];
           if (node && !headerFooterRelIds.has(node)) {
-            for (const b of node.children) traverseBlock(b);
-            const relId = `rIdFtr${ftrCounter}`;
             const partName = `word/footer${ftrCounter}.xml`;
+            for (const b of node.children) traverseBlock(b, partName);
+            const relId = `rIdFtr${ftrCounter}`;
             ftrCounter++;
             headerFooterRelIds.set(node, relId);
             const xml = this.wmlBuilder.buildFooterXml(node, hyperlinkRelIds);
@@ -185,6 +226,18 @@ export class StandardOoxenWriter implements OoxenWriter {
           }
         }
       }
+    }
+
+    // Notes parts own their media and hyperlink relationships exactly like
+    // body and header parts do (F-WNOTE-SCAN, F-WLINK-NOTE).
+    for (const fn of doc.footnotes ?? []) {
+      for (const block of fn.children) traverseBlock(block, 'word/footnotes.xml');
+    }
+    for (const en of doc.endnotes ?? []) {
+      for (const block of en.children) traverseBlock(block, 'word/endnotes.xml');
+    }
+    for (const comment of doc.comments ?? []) {
+      for (const block of comment.children) traverseBlock(block, 'word/comments.xml');
     }
 
     const documentXml = this.wmlBuilder.buildDocumentXml(doc, headerFooterRelIds, hyperlinkRelIds);
@@ -203,6 +256,7 @@ export class StandardOoxenWriter implements OoxenWriter {
       doc.comments,
       undefined,
       requiredNumIds,
+      hyperlinkRelIds,
     );
     return pkg.serialize();
   }

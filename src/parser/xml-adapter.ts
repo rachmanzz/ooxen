@@ -52,12 +52,27 @@ export function isTextNode(node: XmlNode): boolean {
 }
 
 function decodeXmlEntities(text: string): string {
+  // Numeric references decode first so an escaped &amp;#65; stays literal
+  // instead of double-decoding (F-PENT-REF). Out-of-range or surrogate
+  // code points are left literal.
   return text
+    .replace(/&#([0-9]+);/g, (m, d: string) => decodeCodePoint(parseInt(d, 10)) ?? m)
+    .replace(/&#x([0-9a-fA-F]+);/g, (m, h: string) => decodeCodePoint(parseInt(h, 16)) ?? m)
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&amp;/g, '&');
+}
+
+function decodeCodePoint(cp: number): string | undefined {
+  if (!Number.isInteger(cp) || cp < 0 || cp > 0x10ffff) return undefined;
+  if (cp >= 0xd800 && cp <= 0xdfff) return undefined;
+  try {
+    return String.fromCodePoint(cp);
+  } catch {
+    return undefined;
+  }
 }
 
 function escapeXmlText(text: string): string {

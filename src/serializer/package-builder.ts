@@ -15,6 +15,12 @@ export interface ImageMediaPart {
   relationshipId: string;
   contentType: string;
   data: Uint8Array;
+  /**
+   * Part whose XML references this media. Defaults to
+   * `word/document.xml` for callers that predate per-part ownership
+   * (F-WIMG-HDR).
+   */
+  ownerPart?: string;
 }
 
 export interface HeaderFooterPart {
@@ -44,6 +50,7 @@ export interface PackageBuilder {
     comments?: CommentNode[],
     customCommentsXml?: string,
     requiredNumIds?: ReadonlyMap<number, string | undefined>,
+    hyperlinkRelIds?: ReadonlyMap<string, string>,
   ): OpcPackage;
 }
 
@@ -83,6 +90,7 @@ export class StandardPackageBuilder implements PackageBuilder {
     comments?: CommentNode[],
     customCommentsXml?: string,
     requiredNumIds?: ReadonlyMap<number, string | undefined>,
+    hyperlinkRelIds?: ReadonlyMap<string, string>,
   ): OpcPackage {
     const pkg = createPackage();
 
@@ -151,10 +159,16 @@ export class StandardPackageBuilder implements PackageBuilder {
       });
     }
 
-    // 5. Add binary media parts and relationships
+    // 5. Add binary media parts and relationships. Each media rel is
+    // emitted on the part whose XML references it; the binary part itself
+    // is registered once (setPart overwrites by name, and addRelationship
+    // dedupes by id within a part, so repeats from shared nodes collapse).
     for (const media of mediaParts) {
-      const relTarget = media.partName.replace(/^word\//, '');
-      pkg.addRelationship('word/document.xml', {
+      const ownerPart = media.ownerPart ?? 'word/document.xml';
+      const relTarget = media.partName.startsWith('word/')
+        ? media.partName.slice('word/'.length)
+        : media.partName;
+      pkg.addRelationship(ownerPart, {
         id: media.relationshipId,
         type: KNOWN_RELATIONSHIPS.IMAGE,
         target: relTarget,
@@ -183,14 +197,17 @@ export class StandardPackageBuilder implements PackageBuilder {
       });
     }
 
-    // 7. Add external relationships (such as external hyperlinks)
+    // 7. Add external relationships (such as external hyperlinks).
+    // Serializer-collected rels carry their owner part; anything without
+    // one keeps the historical document.xml behavior.
     for (const rel of externalRelationships) {
-      pkg.addRelationship('word/document.xml', rel);
+      const { ownerPart: _owner, ...cleanRel } = rel;
+      pkg.addRelationship(rel.ownerPart ?? 'word/document.xml', cleanRel);
     }
 
     // 8. Add footnotes if provided or custom XML provided
     if (customFootnotesXml || (footnotes && footnotes.length > 0)) {
-      const fnXml = customFootnotesXml ?? this.footnoteBuilder.buildFootnotesXml(footnotes ?? []);
+      const fnXml = customFootnotesXml ?? this.footnoteBuilder.buildFootnotesXml(footnotes ?? [], hyperlinkRelIds);
       pkg.addRelationship('word/document.xml', {
         id: 'rIdFootnotes',
         type: KNOWN_RELATIONSHIPS.FOOTNOTES,
@@ -205,7 +222,7 @@ export class StandardPackageBuilder implements PackageBuilder {
 
     // 9. Add endnotes if provided or custom XML provided
     if (customEndnotesXml || (endnotes && endnotes.length > 0)) {
-      const enXml = customEndnotesXml ?? this.footnoteBuilder.buildEndnotesXml(endnotes ?? []);
+      const enXml = customEndnotesXml ?? this.footnoteBuilder.buildEndnotesXml(endnotes ?? [], hyperlinkRelIds);
       pkg.addRelationship('word/document.xml', {
         id: 'rIdEndnotes',
         type: KNOWN_RELATIONSHIPS.ENDNOTES,
@@ -247,7 +264,7 @@ export class StandardPackageBuilder implements PackageBuilder {
 
     // 11. Add comments if provided or custom XML provided
     if (customCommentsXml || (comments && comments.length > 0)) {
-      const cXml = customCommentsXml ?? this.commentBuilder.buildCommentsXml(comments ?? []);
+      const cXml = customCommentsXml ?? this.commentBuilder.buildCommentsXml(comments ?? [], hyperlinkRelIds);
       pkg.addRelationship('word/document.xml', {
         id: 'rIdComments',
         type: KNOWN_RELATIONSHIPS.COMMENTS,
