@@ -1,4 +1,4 @@
-import type { ImageNode } from '../../types/ast.js';
+import type { ImageAnchor, ImageNode } from '../../types/ast.js';
 import { emuToPt, uint8ArrayToBase64 } from '../../types/common.js';
 import { parseVmlSize } from './shape-parser.js';
 import type { XmlNode } from '../xml-adapter.js';
@@ -30,6 +30,32 @@ export interface ImageResolver {
 }
 
 /**
+ * Reads floating placement (`wp:anchor` positionH/positionV) from an
+ * inline-or-anchor drawing container. Returns undefined for `wp:inline`
+ * containers, which stay in the text flow. Shared by images and shapes
+ * so both overlay at their authored position (F-ANCHOR).
+ */
+export function parseAnchorFromContainer(container: XmlNode): ImageAnchor | undefined {
+  if (!container.nodeName.toLowerCase().endsWith('anchor')) return undefined;
+  const posH = container.children.find((c) => c.nodeName.toLowerCase().endsWith('positionh'));
+  const posV = container.children.find((c) => c.nodeName.toLowerCase().endsWith('positionv'));
+  const offH = posH?.children.find((c) => c.nodeName.toLowerCase().endsWith('posoffset'));
+  const offV = posV?.children.find((c) => c.nodeName.toLowerCase().endsWith('posoffset'));
+  // Align-based positioning (F-ANCHOR): w:align replaces w:posOffset.
+  const alignH = posH?.children.find((c) => c.nodeName.toLowerCase().endsWith('align'))?.textContent.trim().toLowerCase();
+  const alignV = posV?.children.find((c) => c.nodeName.toLowerCase().endsWith('align'))?.textContent.trim().toLowerCase();
+  return {
+    horizontalFrom: posH?.attributes['relativeFrom'] ?? posH?.attributes['relativefrom'] ?? 'column',
+    horizontalOffsetPt: emuToPt(Number.parseFloat(offH?.textContent ?? '0') || 0),
+    horizontalAlign: offH ? undefined : alignH || undefined,
+    verticalFrom: posV?.attributes['relativeFrom'] ?? posV?.attributes['relativefrom'] ?? 'paragraph',
+    verticalOffsetPt: emuToPt(Number.parseFloat(offV?.textContent ?? '0') || 0),
+    verticalAlign: offV ? undefined : alignV || undefined,
+    behindDoc: container.attributes['behindDoc'] === '1' || container.attributes['behinddoc'] === '1',
+  };
+}
+
+/**
  * Parses DrawingML <pic:pic> or VML <v:imagedata> into Universal AST ImageNode.
  */
 export function parseImageNode(node: XmlNode, imageResolver?: ImageResolver): ImageNode | undefined {
@@ -53,25 +79,7 @@ export function parseImageNode(node: XmlNode, imageResolver?: ImageResolver): Im
 
     // Floating placement (wp:anchor positionH/positionV). Inline images
     // carry no anchor and stay in the text flow.
-    let anchor: ImageNode['anchor'];
-    if (container.nodeName.toLowerCase().endsWith('anchor')) {
-      const posH = container.children.find((c) => c.nodeName.toLowerCase().endsWith('positionh'));
-      const posV = container.children.find((c) => c.nodeName.toLowerCase().endsWith('positionv'));
-      const offH = posH?.children.find((c) => c.nodeName.toLowerCase().endsWith('posoffset'));
-      const offV = posV?.children.find((c) => c.nodeName.toLowerCase().endsWith('posoffset'));
-      // Align-based positioning (F-ANCHOR): w:align replaces w:posOffset.
-      const alignH = posH?.children.find((c) => c.nodeName.toLowerCase().endsWith('align'))?.textContent.trim().toLowerCase();
-      const alignV = posV?.children.find((c) => c.nodeName.toLowerCase().endsWith('align'))?.textContent.trim().toLowerCase();
-      anchor = {
-        horizontalFrom: posH?.attributes['relativeFrom'] ?? posH?.attributes['relativefrom'] ?? 'column',
-        horizontalOffsetPt: emuToPt(Number.parseFloat(offH?.textContent ?? '0') || 0),
-        horizontalAlign: offH ? undefined : alignH || undefined,
-        verticalFrom: posV?.attributes['relativeFrom'] ?? posV?.attributes['relativefrom'] ?? 'paragraph',
-        verticalOffsetPt: emuToPt(Number.parseFloat(offV?.textContent ?? '0') || 0),
-        verticalAlign: offV ? undefined : alignV || undefined,
-        behindDoc: container.attributes['behindDoc'] === '1' || container.attributes['behinddoc'] === '1',
-      };
-    }
+    const anchor = parseAnchorFromContainer(container);
 
     // DocPr (metadata)
     const docPr = container.children.find((c) => c.nodeName.toLowerCase().endsWith('docpr'));

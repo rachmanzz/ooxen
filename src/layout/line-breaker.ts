@@ -206,12 +206,15 @@ export class StandardLineBreaker implements LineBreaker {
       }
 
       // Avoid a paragraph-initial tab when real text follows (see above).
+      // Paragraphs with authored tab stops are exempt: the leading tab is
+      // the construct that centers titles at a center stop (F-TABSPAN).
       if (
         currentTokens.length === 0 &&
         token.isTab &&
         isFirstLine &&
         !paragraphHasContent &&
-        paraHasText
+        paraHasText &&
+        (pStyle?.tabStops?.length ?? 0) === 0
       ) {
         continue;
       }
@@ -242,12 +245,15 @@ export class StandardLineBreaker implements LineBreaker {
 
     for (const run of runs) {
       if (run.drawing) {
+        // Floating (anchored) drawings do not consume inline space; the page
+        // engine positions their fragment at the anchor offset instead.
+        const floating = run.drawing.anchor !== undefined;
         tokens.push({
           text: '',
           isSpace: false,
-          width: run.drawing.widthPt,
-          height: run.drawing.heightPt,
-          ascent: run.drawing.heightPt,
+          width: floating ? 0 : run.drawing.widthPt,
+          height: floating ? 0 : run.drawing.heightPt,
+          ascent: floating ? 0 : run.drawing.heightPt,
           descent: 0,
           style: run.style,
           drawing: run.drawing,

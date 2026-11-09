@@ -56,6 +56,11 @@ export interface DrawingShapeNode extends BaseASTNode {
    * back inside `wps:txbx` so the shape/text association round-trips.
    */
   textbox?: ParagraphNode[];
+  /**
+   * Floating placement from `wp:anchor`, same semantics as
+   * {@link ImageNode.anchor}. Absent for inline shapes.
+   */
+  anchor?: ImageAnchor;
 }
 
 export interface ImageNode extends BaseASTNode {

@@ -1,11 +1,17 @@
 import type { BlockNode, DrawingShapeNode, ParagraphNode, VectorPathCommand } from '../../types/ast.js';
 import type { XmlNode } from '../xml-adapter.js';
-import type { ImageResolver } from './image-parser.js';
+import { parseAnchorFromContainer, type ImageResolver } from './image-parser.js';
 import type { NumberingResolver } from '../wml/numbering-resolver.js';
 import type { HyperlinkResolver, ParagraphParser } from '../wml/paragraph-parser.js';
 import type { StyleResolver } from '../wml/style-resolver.js';
 
 const EMU_PER_POINT = 12700;
+
+/** Local element name without namespace prefix, lowercased. */
+function localName(nodeName: string): string {
+  const colon = nodeName.lastIndexOf(':');
+  return (colon >= 0 ? nodeName.slice(colon + 1) : nodeName).toLowerCase();
+}
 
 function parseEmu(val?: string): number {
   if (!val) return 0;
@@ -347,20 +353,22 @@ export function parseDrawingNode(node: XmlNode): DrawingShapeNode | undefined {
     const id = docPr?.attributes['id'];
     const name = docPr?.attributes['name'];
 
-    // Find shape properties inside graphicData
+    // Find shape properties inside graphicData. Match the exact local
+    // name `spPr`: a suffix match would stop at `wps:cNvSpPr`, which
+    // precedes the real `wps:spPr` and carries no fill or geometry.
     let spPr: XmlNode | undefined;
     for (const c of container.children) {
-      if (c.nodeName.toLowerCase().endsWith('graphic')) {
-        const gData = c.children.find((gc) => gc.nodeName.toLowerCase().endsWith('graphicdata'));
+      if (localName(c.nodeName) === 'graphic') {
+        const gData = c.children.find((gc) => localName(gc.nodeName) === 'graphicdata');
         if (gData) {
           const wsp = gData.children.find((wc) => {
-            const t = wc.nodeName.toLowerCase();
-            return t.endsWith('wsp') || t.endsWith('sp');
+            const t = localName(wc.nodeName);
+            return t === 'wsp' || t === 'sp';
           });
           if (wsp) {
-            spPr = wsp.children.find((sc) => sc.nodeName.toLowerCase().endsWith('sppr'));
+            spPr = wsp.children.find((sc) => localName(sc.nodeName) === 'sppr');
           } else {
-            spPr = gData.children.find((sc) => sc.nodeName.toLowerCase().endsWith('sppr'));
+            spPr = gData.children.find((sc) => localName(sc.nodeName) === 'sppr');
           }
         }
       }
@@ -368,7 +376,7 @@ export function parseDrawingNode(node: XmlNode): DrawingShapeNode | undefined {
 
     if (!spPr) {
       // Shape property might be directly inside container in some variants
-      spPr = container.children.find((sc) => sc.nodeName.toLowerCase().endsWith('sppr'));
+      spPr = container.children.find((sc) => localName(sc.nodeName) === 'sppr');
     }
 
     // Fallback dimensions from xfrm
@@ -392,17 +400,17 @@ export function parseDrawingNode(node: XmlNode): DrawingShapeNode | undefined {
       fill = parseHexColor(solidFill);
     }
 
-    // Stroke
+    // Stroke (<a:noFill/> means no outline, not a default black stroke)
     let stroke: { color: string; widthPt: number } | undefined;
     const ln = spPr?.children.find((c) => c.nodeName.toLowerCase().endsWith('ln'));
-    if (ln) {
+    if (ln && !ln.children.some((c) => c.nodeName.toLowerCase().endsWith('nofill'))) {
       const lnW = parseEmu(ln.attributes['w']) || 1;
       const lnSolidFill = ln.children.find((c) => c.nodeName.toLowerCase().endsWith('solidfill'));
       const strokeClr = parseHexColor(lnSolidFill) ?? '#000000';
       stroke = { color: strokeClr, widthPt: lnW };
     }
 
-    // Geometry
+    // Geometry (straight connectors are lines, not boxes)
     let commands: VectorPathCommand[] = [];
     const custGeom = spPr?.children.find((c) => c.nodeName.toLowerCase().endsWith('custgeom'));
     if (custGeom) {
@@ -410,8 +418,15 @@ export function parseDrawingNode(node: XmlNode): DrawingShapeNode | undefined {
     } else {
       const prstGeom = spPr?.children.find((c) => c.nodeName.toLowerCase().endsWith('prstgeom'));
       const prst = prstGeom?.attributes['prst'] ?? 'rect';
-      commands = generatePresetGeometry(prst, widthPt, heightPt);
+      commands = generatePresetGeometry(
+        prst.toLowerCase().startsWith('straightconnector') ? 'line' : prst,
+        widthPt,
+        heightPt,
+      );
     }
+
+    // Floating placement (wp:anchor): resolved by the layout engine like images.
+    const anchor = parseAnchorFromContainer(container);
 
     return {
       type: 'drawing',
@@ -422,6 +437,7 @@ export function parseDrawingNode(node: XmlNode): DrawingShapeNode | undefined {
       commands,
       fill,
       stroke,
+      anchor,
     };
   }
 

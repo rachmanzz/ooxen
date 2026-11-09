@@ -786,10 +786,10 @@ export class StandardPageEngine implements PageEngine {
     anchorCtx?: FloatingAnchorContext,
   ): void {
     for (const frag of pageLine.fragments) {
-      const anchor = frag.image?.anchor;
+      const anchor = frag.image?.anchor ?? frag.drawing?.anchor;
       if (!anchor) continue;
-      const imgW = frag.image!.widthPt;
-      const imgH = frag.image!.heightPt;
+      const imgW = frag.image?.widthPt ?? frag.drawing?.widthPt ?? 0;
+      const imgH = frag.image?.heightPt ?? frag.drawing?.heightPt ?? 0;
       const fromH = anchor.horizontalFrom.toLowerCase();
       const fromV = anchor.verticalFrom.toLowerCase();
       const columnW = anchorCtx?.getColumnWidthPt() ?? 0;
