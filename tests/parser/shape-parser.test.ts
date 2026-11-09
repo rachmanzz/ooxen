@@ -132,6 +132,78 @@ describe('DrawingML & Vector Shape Parser', () => {
     expect(commands[3]).toEqual({ type: 'close', points: [] });
   });
 
+  it('finds wps:spPr even when wps:cNvSpPr precedes it', () => {
+    const xml = `
+      <w:drawing xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                 xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                 xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                 xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+        <wp:anchor>
+          <wp:extent cx="4839970" cy="907415"/>
+          <wp:docPr id="311" name=""/>
+          <wp:positionH relativeFrom="column"><wp:posOffset>76201</wp:posOffset></wp:positionH>
+          <wp:positionV relativeFrom="paragraph"><wp:posOffset>-12699</wp:posOffset></wp:positionV>
+          <a:graphic>
+            <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:wsp>
+                <wps:cNvSpPr/>
+                <wps:cNvPr id="5" name="Shape 5"/>
+                <wps:spPr>
+                  <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                  <a:solidFill><a:srgbClr val="93B3D7"/></a:solidFill>
+                  <a:ln><a:noFill/></a:ln>
+                </wps:spPr>
+              </wps:wsp>
+            </a:graphicData>
+          </a:graphic>
+        </wp:anchor>
+      </w:drawing>
+    `;
+
+    const root = defaultXmlAdapter.parse(xml);
+    const shape = parseDrawingNode(root);
+
+    expect(shape).toBeDefined();
+    expect(shape?.fill).toBe('#93B3D7');
+    // <a:noFill/> means no outline — not a default black stroke.
+    expect(shape?.stroke).toBeUndefined();
+    expect(shape?.anchor?.horizontalFrom).toBe('column');
+    expect(shape?.anchor?.horizontalOffsetPt).toBeCloseTo(6, 0);
+    expect(shape?.anchor?.verticalFrom).toBe('paragraph');
+  });
+
+  it('maps straightConnector shapes to line geometry', () => {
+    const xml = `
+      <w:drawing xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                 xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                 xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                 xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+        <wp:anchor>
+          <wp:extent cx="5725236" cy="12700"/>
+          <wp:docPr id="312" name=""/>
+          <a:graphic>
+            <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:wsp>
+                <wps:spPr>
+                  <a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom>
+                  <a:ln w="12700"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln>
+                </wps:spPr>
+              </wps:wsp>
+            </a:graphicData>
+          </a:graphic>
+        </wp:anchor>
+      </w:drawing>
+    `;
+
+    const root = defaultXmlAdapter.parse(xml);
+    const shape = parseDrawingNode(root);
+
+    expect(shape).toBeDefined();
+    expect(shape?.commands[0]?.type).toBe('moveTo');
+    expect(shape?.commands[1]).toEqual({ type: 'lineTo', points: [shape!.widthPt!, shape!.heightPt!] });
+    expect(shape?.stroke?.color).toBe('#000000');
+  });
+
   it('should generate canonical preset geometries', () => {
     const rectCmds = generatePresetGeometry('rect', 80, 40);
     expect(rectCmds[0]).toEqual({ type: 'moveTo', points: [0, 0] });

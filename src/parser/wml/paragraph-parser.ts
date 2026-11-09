@@ -245,6 +245,17 @@ export class StandardParagraphParser implements ParagraphParser {
         if (!isPureCommentRef || !runs.some((prev) => prev.commentId === r.commentId)) {
           runs.push(r);
         }
+      } else if (tag === 'sdt') {
+        // Run-level content controls unwrap to their inline runs
+        // (F-PSDT-RUN). Block-level sdt is handled by sdt-parser.
+        this.parseRunLevelSdt(child, runs, styleResolver, imageResolver, activeBookmark, activeCommentId);
+      } else if (tag === 'omathpara' || tag === 'omath') {
+        // Equations degrade to their literal text instead of being
+        // dropped (F-PMATH). The plain-text run round-trips as w:r/w:t.
+        const mathText = this.collectMathText(child);
+        if (mathText.length > 0) {
+          runs.push({ type: 'run', text: mathText, bookmarkName: activeBookmark });
+        }
       } else if (tag === 'fldsimple') {
         const instr = (child.attributes['w:instr'] ?? child.attributes['instr'] ?? '').trim();
         const fieldType = classifyFieldInstruction(instr);
@@ -316,6 +327,52 @@ export class StandardParagraphParser implements ParagraphParser {
       bookmarkName,
       children: runs,
     };
+  }
+
+  /**
+   * Unwraps a run-level w:sdt into its sdtContent runs (F-PSDT-RUN).
+   * Only inline content is honored; nested sdt recurses.
+   */
+  private parseRunLevelSdt(
+    node: XmlNode,
+    runs: RunNode[],
+    styleResolver?: StyleResolver,
+    imageResolver?: ImageResolver,
+    activeBookmark?: string,
+    activeCommentId?: string,
+  ): void {
+    const content = node.children.find(
+      (c) => c.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase() === 'sdtcontent',
+    );
+    for (const iChild of content?.children ?? []) {
+      const iTag = iChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+      if (iTag === 'r') {
+        const r = this.parseRun(iChild, styleResolver, imageResolver);
+        if (activeBookmark && !r.bookmarkName) r.bookmarkName = activeBookmark;
+        if (activeCommentId && !r.commentId) r.commentId = activeCommentId;
+        runs.push(r);
+      } else if (iTag === 'sdt') {
+        this.parseRunLevelSdt(iChild, runs, styleResolver, imageResolver, activeBookmark, activeCommentId);
+      }
+    }
+  }
+
+  /** Collects literal m:t text under an OMML node (F-PMATH). */
+  private collectMathText(node: XmlNode): string {
+    let out = '';
+    for (const child of node.children ?? []) {
+      if (child.kind && child.kind !== 'element') {
+        out += child.textContent ?? '';
+        continue;
+      }
+      const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+      if (tag === 't') {
+        out += child.textContent ?? '';
+      } else {
+        out += this.collectMathText(child);
+      }
+    }
+    return out;
   }
 
   parseRun(node: XmlNode, styleResolver?: StyleResolver, imageResolver?: ImageResolver): RunNode {

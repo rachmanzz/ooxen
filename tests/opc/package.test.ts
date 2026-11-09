@@ -85,4 +85,19 @@ describe('OPC Package Integration', () => {
       });
     }).toThrow('Invalid OPC part name');
   });
+
+  it('collapses dot segments on lookup while still rejecting traversal on write (F-PDOT-URI)', () => {
+    const pkg = createPackage();
+    const encoder = new TextEncoder();
+    pkg.setPart({ name: 'word/media/x.png', contentType: 'image/png', data: encoder.encode('x') });
+
+    // Part-relative targets that climb with .. must resolve like real OPC stacks do.
+    expect(pkg.getPart('word/../media/x.png')).toBeDefined();
+    expect(pkg.getPart('word/sub/../../media/x.png')).toBeDefined();
+    expect(pkg.getPart('word/./media/x.png')).toBeDefined();
+    // Absolute lookups keep working.
+    expect(pkg.getPart('/word/media/x.png')).toBeDefined();
+    // Writing traversal names is still rejected.
+    expect(() => pkg.setPart({ name: '../evil.xml', contentType: 'text/xml', data: encoder.encode('e') })).toThrow();
+  });
 });

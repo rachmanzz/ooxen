@@ -467,6 +467,21 @@ export class StandardDocumentParser implements DocumentParser {
     });
     const imageResolver = resolverFor(buildImageMap(docRels));
 
+    // Relationship ids are scoped per part: a header, footer, footnote,
+    // endnote, or comment resolves its hyperlink rIds against its OWN
+    // .rels file, never the document's (F-PLINK-PART). Sharing the
+    // document map would resolve a part-local rId to an unrelated
+    // same-id document URL.
+    const hyperlinkResolverFor = (rels: OpcRelationship[]): HyperlinkResolver => {
+      const map = new Map<string, string>();
+      for (const rel of rels) {
+        if (rel.type === KNOWN_RELATIONSHIPS.HYPERLINK && rel.target) {
+          map.set(rel.id, rel.target);
+        }
+      }
+      return { resolveHyperlink: (relId) => map.get(relId) };
+    };
+
     // 5. Resolve headers and footers
     const headerMap = new Map<string, HeaderFooterNode>();
     const footerMap = new Map<string, HeaderFooterNode>();
@@ -476,7 +491,7 @@ export class StandardDocumentParser implements DocumentParser {
         const hPart = pkg.getPart(hPath);
         if (hPart) {
           const hXml = parseWithMarkupCompatibility(textDecoder.decode(hPart.data), (xml) => defaultXmlAdapter.parse(xml));
-          const hNode = parseHeaderFooterNode(hXml, 'default', styleResolver, numberingResolver, resolverFor(buildImageMap(pkg.getRelationships(hPath))));
+          const hNode = parseHeaderFooterNode(hXml, 'default', styleResolver, numberingResolver, resolverFor(buildImageMap(pkg.getRelationships(hPath))), hyperlinkResolverFor(pkg.getRelationships(hPath)));
           headerMap.set(rel.id, hNode);
         }
       } else if (rel.type === KNOWN_RELATIONSHIPS.FOOTER) {
@@ -484,7 +499,7 @@ export class StandardDocumentParser implements DocumentParser {
         const fPart = pkg.getPart(fPath);
         if (fPart) {
           const fXml = parseWithMarkupCompatibility(textDecoder.decode(fPart.data), (xml) => defaultXmlAdapter.parse(xml));
-          const fNode = parseHeaderFooterNode(fXml, 'default', styleResolver, numberingResolver, resolverFor(buildImageMap(pkg.getRelationships(fPath))));
+          const fNode = parseHeaderFooterNode(fXml, 'default', styleResolver, numberingResolver, resolverFor(buildImageMap(pkg.getRelationships(fPath))), hyperlinkResolverFor(pkg.getRelationships(fPath)));
           footerMap.set(rel.id, fNode);
         }
       }
@@ -494,16 +509,8 @@ export class StandardDocumentParser implements DocumentParser {
       resolveFooter: (relId) => footerMap.get(relId),
     };
 
-    // 6. Resolve hyperlinks
-    const hyperlinkMap = new Map<string, string>();
-    for (const rel of docRels) {
-      if (rel.type === KNOWN_RELATIONSHIPS.HYPERLINK && rel.target) {
-        hyperlinkMap.set(rel.id, rel.target);
-      }
-    }
-    const hyperlinkResolver: HyperlinkResolver = {
-      resolveHyperlink: (relId) => hyperlinkMap.get(relId),
-    };
+    // 6. Resolve hyperlinks (per-part helper defined in section 4).
+    const hyperlinkResolver: HyperlinkResolver = hyperlinkResolverFor(docRels);
 
     // 7. Resolve footnotes & endnotes
     let footnotes: FootnoteNode[] | undefined;
@@ -516,7 +523,7 @@ export class StandardDocumentParser implements DocumentParser {
         styleResolver,
         numberingResolver,
         resolverFor(buildImageMap(pkg.getRelationships(fnPath))),
-        hyperlinkResolver,
+        hyperlinkResolverFor(pkg.getRelationships(fnPath)),
       );
     }
 
@@ -530,7 +537,7 @@ export class StandardDocumentParser implements DocumentParser {
         styleResolver,
         numberingResolver,
         resolverFor(buildImageMap(pkg.getRelationships(enPath))),
-        hyperlinkResolver,
+        hyperlinkResolverFor(pkg.getRelationships(enPath)),
       );
     }
 
@@ -545,7 +552,7 @@ export class StandardDocumentParser implements DocumentParser {
         styleResolver,
         numberingResolver,
         resolverFor(buildImageMap(pkg.getRelationships(comPath))),
-        hyperlinkResolver,
+        hyperlinkResolverFor(pkg.getRelationships(comPath)),
       );
     }
 

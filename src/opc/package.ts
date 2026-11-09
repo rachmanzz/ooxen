@@ -46,7 +46,21 @@ export function isValidPartName(name: string): boolean {
 }
 
 function normalizePartName(name: string): string {
-  return name.replace(/\\/g, '/').replace(/^\/+/, '');
+  // Collapse dot segments so part-relative targets that climb with ../
+  // resolve (F-PDOT-URI). Relationship targets are resolved against the
+  // word/ directory, so a .. that would pop the leading segment clamps
+  // instead of escaping it: word/../media/x.png -> word/media/x.png.
+  // Write-path validation still rejects traversal names up front.
+  const out: string[] = [];
+  for (const seg of name.replace(/\\/g, '/').replace(/^\/+/, '').split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') {
+      if (out.length > 1) out.pop();
+      continue;
+    }
+    out.push(seg);
+  }
+  return out.join('/');
 }
 
 export class StandardOpcPackage implements OpcPackage {
