@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { openPackage } from '../../src/opc/package.js';
 import { openDocument } from '../../src/parser/wml/document-parser.js';
 import { StandardOoxenWriter } from '../../src/serializer/ooxen-writer.js';
+import { defaultPackageBuilder } from '../../src/serializer/package-builder.js';
 import type { DocumentNode, HeaderFooterNode, ImageNode } from '../../src/types/ast.js';
 
 const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4]);
@@ -139,6 +140,8 @@ describe('Write integrity for notes and part-local media (F-WIMG-HDR, F-WNOTE-SC
     expect(xml).toContain('<wp:anchor');
     expect(xml).not.toContain('<wp:inline>');
     expect(xml).toContain('<wp:align>center</wp:align>');
+    // CT_Anchor requires a wrap element between extent and docPr.
+    expect(xml).toMatch(/<wp:extent[^>]*\/>\s*<wp:wrapNone\/>\s*<wp:docPr/);
 
     const reparsed = await openDocument(bytes);
     const paras = reparsed.sections[0]!.children.filter((b) => b.type === 'paragraph');
@@ -203,5 +206,75 @@ describe('Write integrity for notes and part-local media (F-WIMG-HDR, F-WNOTE-SC
     // (Comment ids renumber on write, so take the single comment.)
     const comment = reparsed.comments?.[0];
     expect(comment?.children.some((b) => b.type === 'table')).toBe(true);
+  });
+
+  it('writes evenAndOddHeaders to settings.xml, never into sectPr (F-HDREVEN)', async () => {
+    const header = (kind: 'default' | 'even', text: string): HeaderFooterNode => ({
+      type: 'header',
+      kind,
+      children: [{ type: 'paragraph', children: [{ type: 'run', text }] }],
+    });
+    const section = baseSection([{ type: 'paragraph', children: [{ type: 'run', text: 'Body' }] }]);
+    const doc = docWith([{
+      ...section,
+      properties: { ...section.properties, evenAndOddHeaders: true },
+      headers: { default: header('default', 'Odd'), even: header('even', 'Even') },
+    }]);
+    const bytes = await new StandardOoxenWriter().write(doc);
+    const documentXml = await partText(bytes, 'word/document.xml');
+    expect(documentXml).not.toContain('evenAndOddHeaders');
+    const settingsXml = await partText(bytes, 'word/settings.xml');
+    expect(settingsXml).toContain('<w:evenAndOddHeaders/>');
+    const docRels = (await openPackage(bytes)).getRelationships('word/document.xml');
+    expect(docRels.some((r) => r.type.endsWith('/settings') && r.target === 'settings.xml')).toBe(true);
+
+    const reparsed = await openDocument(bytes);
+    expect(reparsed.sections[0]!.properties.evenAndOddHeaders).toBe(true);
+    expect(reparsed.sections[0]!.headers?.even).toBeDefined();
+  });
+
+  it('leaves evenAndOddHeaders unset when no section asks for it (F-HDREVEN)', async () => {
+    const doc = docWith([baseSection([{ type: 'paragraph', children: [{ type: 'run', text: 'Body' }] }])]);
+    const bytes = await new StandardOoxenWriter().write(doc);
+    expect((await openPackage(bytes)).getPart('word/settings.xml')).toBeUndefined();
+    const reparsed = await openDocument(bytes);
+    // A parsed package records the switch explicitly so the layout can
+    // tell "unused even part" from "hand-built section".
+    expect(reparsed.sections[0]!.properties.evenAndOddHeaders).toBe(false);
+  });
+
+  it('writes settings.xml for a hand-built section whose even header has no flag (F-HDREVEN)', async () => {
+    const header = (kind: 'default' | 'even', text: string): HeaderFooterNode => ({
+      type: 'header',
+      kind,
+      children: [{ type: 'paragraph', children: [{ type: 'run', text }] }],
+    });
+    const doc = docWith([{
+      ...baseSection([{ type: 'paragraph', children: [{ type: 'run', text: 'Body' }] }]),
+      headers: { default: header('default', 'Odd'), even: header('even', 'Even') },
+    }]);
+    const bytes = await new StandardOoxenWriter().write(doc);
+    expect(await partText(bytes, 'word/settings.xml')).toContain('<w:evenAndOddHeaders/>');
+    const reparsed = await openDocument(bytes);
+    expect(reparsed.sections[0]!.properties.evenAndOddHeaders).toBe(true);
+  });
+
+  it('registers a shared image once per owner part (F-WIMG-HDR)', async () => {
+    const logo = dataImage({ name: 'logo.png' });
+    const section = baseSection([paraWithImage(logo), paraWithImage(logo), paraWithImage(logo)]);
+    const doc = docWith([{ ...section, headers: { default: headerWithImage(logo) } }]);
+    let mediaCount = -1;
+    const spyBuilder = {
+      assemblePackage: (...args: Parameters<typeof defaultPackageBuilder.assemblePackage>) => {
+        mediaCount = (args[3] ?? []).length;
+        return defaultPackageBuilder.assemblePackage(...args);
+      },
+    };
+    const bytes = await new StandardOoxenWriter(undefined, spyBuilder).write(doc);
+    // One entry for word/document.xml and one for the header part.
+    expect(mediaCount).toBe(2);
+    const pkg = await openPackage(bytes);
+    const docImageRels = pkg.getRelationships('word/document.xml').filter((r) => r.type.endsWith('/image'));
+    expect(docImageRels.length).toBe(1);
   });
 });

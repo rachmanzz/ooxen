@@ -18,6 +18,8 @@ export interface NumberingLevelDefinition {
   levelText: string;
   indentLeftPt?: number;
   hangingPt?: number;
+  fontFamily?: string;
+  fontSizePt?: number;
 }
 
 export interface AbstractNumberingDefinition {
@@ -128,6 +130,19 @@ export function normalizeBulletSymbol(rawText: string): string {
   return rawText;
 }
 
+/**
+ * Symbol-encoded fonts map glyphs onto the Private Use Area, so a bullet
+ * normalized to a real Unicode code point has no glyph in them and draws
+ * as a notdef box (or silently falls back to another face).
+ */
+const SYMBOL_ENCODED_FONTS = new Set(['symbol', 'wingdings', 'wingdings 2', 'wingdings 3', 'webdings', 'mt extra']);
+
+function prefixFontForBullet(levelText: string, normalized: string, fontFamily: string | undefined): string | undefined {
+  if (!fontFamily) return undefined;
+  if (normalized === levelText) return fontFamily;
+  return SYMBOL_ENCODED_FONTS.has(fontFamily.trim().toLowerCase()) ? undefined : fontFamily;
+}
+
 export class StandardNumberingResolver implements NumberingResolver {
   private abstractNums: Map<number, AbstractNumberingDefinition> = new Map();
   private concreteNums: Map<number, ConcreteNumberingInstance> = new Map();
@@ -180,6 +195,8 @@ export class StandardNumberingResolver implements NumberingResolver {
             let levelText = `%${ilvl + 1}.`;
             let indentLeftPt: number | undefined;
             let hangingPt: number | undefined;
+            let fontFamily: string | undefined;
+            let fontSizePt: number | undefined;
 
             for (const prop of lvlNode.children) {
               const pTag = prop.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
@@ -200,6 +217,13 @@ export class StandardNumberingResolver implements NumberingResolver {
                   if (left) indentLeftPt = twipsToPt(Number(left));
                   if (hanging) hangingPt = twipsToPt(Number(hanging));
                 }
+              } else if (pTag === 'rpr') {
+                const fonts = prop.children.find((c) => c.nodeName.toLowerCase().endsWith('rfonts'));
+                const ascii = fonts?.attributes['w:ascii'] ?? fonts?.attributes['ascii'];
+                if (ascii) fontFamily = ascii;
+                const sz = prop.children.find((c) => c.nodeName.toLowerCase().endsWith('sz'));
+                const halfPt = Number(sz?.attributes['w:val'] ?? sz?.attributes['val']);
+                if (sz && !Number.isNaN(halfPt) && halfPt > 0) fontSizePt = halfPt / 2;
               }
             }
 
@@ -210,6 +234,8 @@ export class StandardNumberingResolver implements NumberingResolver {
               levelText,
               indentLeftPt,
               hangingPt,
+              fontFamily,
+              fontSizePt,
             });
           }
         }
@@ -270,13 +296,19 @@ export class StandardNumberingResolver implements NumberingResolver {
     }
 
     if (levelDef.format === 'bullet') {
+      const prefixText = normalizeBulletSymbol(levelDef.levelText);
       return {
         numId,
         level,
         format: 'bullet',
-        prefixText: normalizeBulletSymbol(levelDef.levelText),
+        prefixText,
         indentLeftPt: levelDef.indentLeftPt,
         hangingPt: levelDef.hangingPt,
+        // The level font only applies when the glyph it was authored for
+        // survives normalization; a PUA bullet rewritten to Unicode in a
+        // symbol font would render as a notdef box (F-NUMFONT).
+        prefixFontFamily: prefixFontForBullet(levelDef.levelText, prefixText, levelDef.fontFamily),
+        prefixFontSizePt: levelDef.fontSizePt,
       };
     }
 
@@ -307,6 +339,8 @@ export class StandardNumberingResolver implements NumberingResolver {
       prefixText: resolvedText,
       indentLeftPt: levelDef.indentLeftPt,
       hangingPt: levelDef.hangingPt,
+      prefixFontFamily: levelDef.fontFamily,
+      prefixFontSizePt: levelDef.fontSizePt,
     };
   }
 

@@ -51,7 +51,14 @@ export interface PackageBuilder {
     customCommentsXml?: string,
     requiredNumIds?: ReadonlyMap<number, string | undefined>,
     hyperlinkRelIds?: ReadonlyMap<string, string>,
+    settings?: DocumentSettings,
   ): OpcPackage;
+}
+
+/** Document-wide switches written to word/settings.xml. */
+export interface DocumentSettings {
+  /** Distinct even-page headers/footers (ISO/IEC 29500-1 §17.15.1.35). */
+  evenAndOddHeaders?: boolean;
 }
 
 export class StandardPackageBuilder implements PackageBuilder {
@@ -91,6 +98,7 @@ export class StandardPackageBuilder implements PackageBuilder {
     customCommentsXml?: string,
     requiredNumIds?: ReadonlyMap<number, string | undefined>,
     hyperlinkRelIds?: ReadonlyMap<string, string>,
+    settings?: DocumentSettings,
   ): OpcPackage {
     const pkg = createPackage();
 
@@ -156,6 +164,26 @@ export class StandardPackageBuilder implements PackageBuilder {
         name: 'word/numbering.xml',
         contentType: KNOWN_CONTENT_TYPES.WML_NUMBERING,
         data: textEncoder.encode(numXml),
+      });
+    }
+
+    // 4b. Add settings.xml when a document-wide switch is on. The flag
+    // lives here, never in w:sectPr, where it is not a permitted child.
+    if (settings?.evenAndOddHeaders) {
+      pkg.addRelationship('word/document.xml', {
+        id: nextRelId(),
+        type: KNOWN_RELATIONSHIPS.SETTINGS,
+        target: 'settings.xml',
+      });
+      pkg.setPart({
+        name: 'word/settings.xml',
+        contentType: KNOWN_CONTENT_TYPES.WML_SETTINGS,
+        data: textEncoder.encode(
+          '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
+            '<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">\n' +
+            '  <w:evenAndOddHeaders/>\n' +
+            '</w:settings>',
+        ),
       });
     }
 

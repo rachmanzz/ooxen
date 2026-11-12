@@ -61,4 +61,12 @@ describe('Ooxen built-in CSS', () => {
     expect(pkg.exports?.['./css']).toBe('./dist/renderer/html/ooxen.css');
     expect(pkg.style).toBe('./dist/renderer/html/ooxen.css');
   });
+
+  it('aligns HTML tab characters to the 36pt default tab grid (F-TABLEAD)', () => {
+    const css = readFileSync(cssPath, 'utf8');
+    const docRule = /\.ooxen-document \{[^}]*\}/.exec(css)?.[0] ?? '';
+    expect(docRule).toContain('tab-size: 36pt');
+    const tabRule = /\.ooxen-document \.ooxen-tab \{[^}]*\}/.exec(css)?.[0] ?? '';
+    expect(tabRule).toContain('white-space: pre');
+  });
 });

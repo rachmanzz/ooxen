@@ -3,6 +3,7 @@ import type { PageLayout } from '../../layout/page-engine.js';
 import type { Size } from '../../types/common.js';
 import type { CanvasTarget } from './canvas-target.js';
 import { defaultDrawPrimitives, type DrawPrimitives } from './draw-primitives.js';
+import { previewWmfImage } from '../../parser/dml/wmf-preview.js';
 
 export interface PageMetaEvent {
   pageIndex: number;
@@ -139,10 +140,41 @@ export class StandardPageRenderer implements PageRenderer {
         const fragX = line.bounds.x + fragment.bounds.x;
         const fragY = line.bounds.y + fragment.bounds.y;
 
-        if (fragment.drawing) {
+        if (fragment.image) {
+          // WMF equation previews draw as vectors: browsers cannot decode
+          // the metafile to a bitmap (F-WMFEQ).
+          const preview = previewWmfImage(fragment.image);
+          if (preview && this.primitives.drawWmfPreview) {
+            this.primitives.drawWmfPreview(
+              target,
+              preview,
+              fragX,
+              fragY,
+              fragment.image.widthPt,
+              fragment.image.heightPt,
+            );
+          } else {
+            this.primitives.drawImage(target, fragment.image, fragX, fragY);
+          }
+        } else if (fragment.drawing) {
           this.primitives.drawShape(target, fragment.drawing, fragX, fragY);
-        } else if (fragment.image) {
-          this.primitives.drawImage(target, fragment.image, fragX, fragY);
+          // Floating shape textbox content renders inside the shape frame
+          // at the layout insets (F-TBXFLOAT).
+          const shapeText = fragment.shapeText;
+          if (shapeText) {
+            for (const textLine of shapeText.lines) {
+              for (const textFragment of textLine.fragments) {
+                this.primitives.drawText(
+                  target,
+                  textFragment.text,
+                  fragX + shapeText.x + textLine.bounds.x + textFragment.bounds.x,
+                  fragY + shapeText.y + textLine.bounds.y + textFragment.bounds.y,
+                  textLine.baseline,
+                  textFragment.style,
+                );
+              }
+            }
+          }
         } else if (fragment.isTab) {
           if (fragment.barTab) {
             // Bar tab stop: vertical rule spanning the line height.

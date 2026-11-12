@@ -15,11 +15,21 @@ import { defaultTextMetrics, type TextMetricsMeasurer } from './text-metrics.js'
  * Line breaking and word wrapping layout model.
  */
 
+export interface ShapeTextLayout {
+  /** Lines laid out inside the shape frame, relative to the shape origin. */
+  lines: LayoutLine[];
+  /** Inset from the shape left/top edge where the text block starts. */
+  x: number;
+  y: number;
+}
+
 export interface LineFragment {
   text: string;
   style?: TextStyle;
   drawing?: DrawingShapeNode;
   image?: ImageNode;
+  /** Floating shape textbox content laid out inside the shape (F-TBXFLOAT). */
+  shapeText?: ShapeTextLayout;
   bounds: Rect; // relative to line (x: offset from line start, y: 0)
   hyperlink?: HyperlinkInfo;
   bookmarkName?: string;
@@ -48,6 +58,8 @@ interface WordToken {
   text: string;
   isSpace: boolean;
   isTab?: boolean;
+  /** Synthetic tab after a list number: advances to the text indent, not to a tab stop. */
+  isNumberingTab?: boolean;
   tabLeader?: TabLeader;
   barTab?: boolean;
   width: number;
@@ -82,28 +94,81 @@ export class StandardLineBreaker implements LineBreaker {
     const baseEffectiveWidth = Math.max(10, availableWidth - indentLeft - indentRight);
 
     // 1. Tokenize runs into words and whitespace tokens (with numbering prefix if present)
-    const prefixText = paragraph.style?.numbering?.prefixText;
+    const numbering = paragraph.style?.numbering;
+    const prefixText = numbering?.prefixText;
+    // The bullet/number glyph uses the numbering level's own rPr font
+    // (often a symbol font), not the paragraph font (F-NUMFONT).
+    const prefixStyle = {
+      ...paragraph.children[0]?.style,
+      ...(numbering?.prefixFontFamily ? { fontFamily: numbering.prefixFontFamily } : {}),
+      ...(numbering?.prefixFontSizePt ? { fontSizePt: numbering.prefixFontSizePt } : {}),
+    };
     const runsToTokenize: RunNode[] = prefixText
-      ? [{ type: 'run', text: `${prefixText}\t`, style: paragraph.children[0]?.style }, ...paragraph.children]
+      ? [{ type: 'run', text: `${prefixText}\t`, style: prefixStyle }, ...paragraph.children]
       : paragraph.children;
 
     const tokens = this.tokenizeRuns(runsToTokenize);
-    // A paragraph-initial tab is dropped when real text follows (reference
-    // renderers collapse it); a tab-only paragraph keeps its first tab so
-    // leader-dot rows survive. Tabs after wrapping are always kept.
-    const paraHasText = tokens.some(
-      (t) => !t.isSpace && !t.isTab && t.breakType === undefined && t.text !== '\n' && t.text.trim().length > 0,
-    );
-    let paragraphHasContent = false;
+    // The prefix run tokenizes first; a multi-word prefix ("Article 1")
+    // spans several tokens, so find the synthesized tab by accumulating
+    // text up to the prefix length rather than assuming it is tokens[1].
+    let prefixTabIndex = -1;
+    if (prefixText !== undefined) {
+      let covered = '';
+      for (let i = 0; i < tokens.length; i++) {
+        const t = tokens[i]!;
+        if (t.isTab) {
+          if (covered === prefixText) prefixTabIndex = i;
+          break;
+        }
+        covered += t.text;
+        if (covered.length > prefixText.length) break;
+      }
+    }
+    if (prefixTabIndex > 0) {
+      // The tab synthesized right after the list number advances to the
+      // text indent (F-NUMTAB), never to an explicit tab stop.
+      const tab = tokens[prefixTabIndex]!;
+      tab.isNumberingTab = true;
+      // A symbol font's box metrics can dwarf the text line (its
+      // fontBoundingBox spans the tallest glyphs, not the bullet), so
+      // the prefix and its tab take their vertical box from the
+      // paragraph font while rendering in the level font (F-NUMBOX).
+      // Otherwise the line box balloons and body text collides with
+      // floats anchored below the paragraph. Widths stay as measured in
+      // the level font: that is the glyph actually drawn, and the tab
+      // after it must start where the number really ends.
+      const measureStyle = {
+        ...paragraph.children[0]?.style,
+        ...(numbering?.prefixFontSizePt ? { fontSizePt: numbering.prefixFontSizePt } : {}),
+      };
+      for (let i = 0; i < prefixTabIndex; i++) {
+        const t = tokens[i]!;
+        const m = this.metrics.measureText(t.text, measureStyle);
+        t.height = m.height;
+        t.ascent = m.ascent;
+        t.descent = m.descent;
+      }
+      tab.height = 0;
+      tab.ascent = 0;
+      tab.descent = 0;
+    }
+    // A paragraph-initial tab is a real tab: Word advances it to the next
+    // stop (the default 36pt grid when none is authored), exactly like a
+    // typed Tab key. Only a leading tab that Word itself turned into a
+    // first-line indent is absent from the XML, and that case arrives as
+    // w:ind, which the indent handling above already covers (F-TABLEAD).
+    // Content-less lines (empty or anchor-only paragraphs) measure from
+    // the paragraph mark's direct font size, falling back to the 11pt
+    // default, the way reference renderers size the pilcrow line (F-PMARK).
+    const fallbackSize = pStyle?.markFontSizePt ?? 11;
     if (tokens.length === 0) {
       // Empty paragraph line
-      const defaultSize = 11;
-      const height = defaultSize * 1.2;
+      const height = fallbackSize * 1.2;
       return [
         {
           bounds: { x: indentLeft + firstLineIndent, y: 0, width: 0, height },
           fragments: [],
-          baseline: defaultSize * 0.82,
+          baseline: fallbackSize * 0.82,
         },
       ];
     }
@@ -133,6 +198,7 @@ export class StandardLineBreaker implements LineBreaker {
           indentLeft + (isFirstLine ? firstLineIndent : 0),
           currentY,
           false,
+          fallbackSize,
         );
         line.breakType = token.breakType;
         lines.push(line);
@@ -152,6 +218,7 @@ export class StandardLineBreaker implements LineBreaker {
           indentLeft + (isFirstLine ? firstLineIndent : 0),
           currentY,
           false,
+          fallbackSize,
         );
         lines.push(line);
         currentY += line.bounds.height;
@@ -164,7 +231,10 @@ export class StandardLineBreaker implements LineBreaker {
       if (token.isTab) {
         const lineStartX = indentLeft + (isFirstLine ? firstLineIndent : 0);
         const currentXFromMargin = lineStartX + currentLineWidth;
-        const computed = this.computeTabToken(i, tokens, currentXFromMargin, pStyle?.tabStops);
+        const computed = this.computeTabToken(i, tokens, currentXFromMargin, pStyle?.tabStops, {
+          isNumberingTab: token.isNumberingTab,
+          indentEndPt: indentLeft,
+        });
         token.width = computed.width;
         token.tabLeader = computed.leader;
         token.barTab = computed.barTab;
@@ -184,6 +254,7 @@ export class StandardLineBreaker implements LineBreaker {
           indentLeft + (isFirstLine ? firstLineIndent : 0),
           currentY,
           true,
+          fallbackSize,
         );
         lines.push(line);
         currentY += line.bounds.height;
@@ -193,7 +264,10 @@ export class StandardLineBreaker implements LineBreaker {
 
         if (token.isTab) {
           const newLineStartX = indentLeft + (isFirstLine ? firstLineIndent : 0);
-          const computed = this.computeTabToken(i, tokens, newLineStartX, pStyle?.tabStops);
+          const computed = this.computeTabToken(i, tokens, newLineStartX, pStyle?.tabStops, {
+            isNumberingTab: token.isNumberingTab,
+            indentEndPt: indentLeft,
+          });
           token.width = computed.width;
           token.tabLeader = computed.leader;
           token.barTab = computed.barTab;
@@ -205,22 +279,7 @@ export class StandardLineBreaker implements LineBreaker {
         continue;
       }
 
-      // Avoid a paragraph-initial tab when real text follows (see above).
-      // Paragraphs with authored tab stops are exempt: the leading tab is
-      // the construct that centers titles at a center stop (F-TABSPAN).
-      if (
-        currentTokens.length === 0 &&
-        token.isTab &&
-        isFirstLine &&
-        !paragraphHasContent &&
-        paraHasText &&
-        (pStyle?.tabStops?.length ?? 0) === 0
-      ) {
-        continue;
-      }
-
       currentTokens.push(token);
-      paragraphHasContent = true;
       currentLineWidth += token.width;
     }
 
@@ -233,6 +292,7 @@ export class StandardLineBreaker implements LineBreaker {
         indentLeft + (isFirstLine ? firstLineIndent : 0),
         currentY,
         false, // last line is not justified
+        fallbackSize,
       );
       lines.push(line);
     }
@@ -385,8 +445,22 @@ export class StandardLineBreaker implements LineBreaker {
     tokens: WordToken[],
     currentXFromMargin: number,
     tabStops?: TabStop[],
+    numberingTab?: { isNumberingTab?: boolean; indentEndPt?: number },
   ): { width: number; leader?: TabLeader; barTab?: boolean } {
     const defaultInterval = 36; // 720 twips = 36 pt
+
+    if (
+      numberingTab?.isNumberingTab &&
+      numberingTab.indentEndPt !== undefined &&
+      numberingTab.indentEndPt - currentXFromMargin > 0.5
+    ) {
+      // The synthetic tab after a list number advances to the text indent
+      // (hanging indent end), never to an explicit tab stop (F-NUMTAB).
+      // Reference renderers ignore custom stops for this tab. A number
+      // wider than the hanging indent has already passed the indent end,
+      // so it falls through to the regular stop search below.
+      return { width: numberingTab.indentEndPt - currentXFromMargin, leader: 'none' };
+    }
 
     // Look for the next custom tab stop ahead of current position
     const matchedStop = (tabStops ?? [])
@@ -476,6 +550,7 @@ export class StandardLineBreaker implements LineBreaker {
     lineStartX: number,
     lineY: number,
     isWrapped: boolean,
+    fallbackSizePt = 11,
   ): LayoutLine {
     // Remove trailing spaces for alignment calculation
     while (tokens.length > 0 && tokens[tokens.length - 1]?.isSpace) {
@@ -483,16 +558,15 @@ export class StandardLineBreaker implements LineBreaker {
     }
 
     if (tokens.length === 0) {
-      const defaultSize = 11;
       return {
         bounds: {
           x: lineStartX,
           y: lineY,
           width: 0,
-          height: defaultSize * 1.2,
+          height: fallbackSizePt * 1.2,
         },
         fragments: [],
-        baseline: defaultSize * 0.82,
+        baseline: fallbackSizePt * 0.82,
       };
     }
 
@@ -506,8 +580,8 @@ export class StandardLineBreaker implements LineBreaker {
       if (token.descent > maxDescent) maxDescent = token.descent;
     }
 
-    if (maxAscent === 0) maxAscent = 9;
-    if (maxDescent === 0) maxDescent = 2.5;
+    if (maxAscent === 0) maxAscent = fallbackSizePt * 0.82;
+    if (maxDescent === 0) maxDescent = fallbackSizePt * 0.22;
 
     const lineHeight = maxAscent + maxDescent;
     const slack = Math.max(0, availableWidth - naturalWidth);

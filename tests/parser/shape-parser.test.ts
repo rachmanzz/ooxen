@@ -204,6 +204,67 @@ describe('DrawingML & Vector Shape Parser', () => {
     expect(shape?.stroke?.color).toBe('#000000');
   });
 
+  it('draws straightConnector with zero xfrm height as a horizontal line (F-CONNECTOR)', () => {
+    const xml = `
+      <w:drawing xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                 xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                 xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                 xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+        <wp:anchor>
+          <wp:extent cx="5725236" cy="12700"/>
+          <wp:docPr id="312" name=""/>
+          <a:graphic>
+            <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:wsp>
+                <wps:spPr>
+                  <a:xfrm><a:off x="0" y="0"/><a:ext cx="5725236" cy="0"/></a:xfrm>
+                  <a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom>
+                  <a:ln w="12700"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln>
+                </wps:spPr>
+              </wps:wsp>
+            </a:graphicData>
+          </a:graphic>
+        </wp:anchor>
+      </w:drawing>
+    `;
+
+    const root = defaultXmlAdapter.parse(xml);
+    const shape = parseDrawingNode(root);
+
+    expect(shape).toBeDefined();
+    expect(shape?.commands[1]).toEqual({ type: 'lineTo', points: [shape!.widthPt!, 0] });
+    expect(shape?.stroke?.widthPt).toBeCloseTo(1, 5);
+  });
+
+  it('gives a zero-extent straightConnector a stroke-thin box, not the 100pt default (F-CONNECTOR)', () => {
+    const xml = `
+      <w:drawing xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                 xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                 xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                 xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+        <wp:anchor>
+          <wp:extent cx="5725236" cy="0"/>
+          <wp:docPr id="313" name=""/>
+          <a:graphic>
+            <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:wsp>
+                <wps:spPr>
+                  <a:xfrm><a:off x="0" y="0"/><a:ext cx="5725236" cy="0"/></a:xfrm>
+                  <a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom>
+                  <a:ln w="19050"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln>
+                </wps:spPr>
+              </wps:wsp>
+            </a:graphicData>
+          </a:graphic>
+        </wp:anchor>
+      </w:drawing>
+    `;
+    const shape = parseDrawingNode(defaultXmlAdapter.parse(xml));
+    expect(shape?.heightPt).toBeCloseTo(1.5, 5);
+    expect(shape?.widthPt).toBeCloseTo(5725236 / 12700, 3);
+    expect(shape?.commands[1]).toEqual({ type: 'lineTo', points: [shape!.widthPt!, 0] });
+  });
+
   it('should generate canonical preset geometries', () => {
     const rectCmds = generatePresetGeometry('rect', 80, 40);
     expect(rectCmds[0]).toEqual({ type: 'moveTo', points: [0, 0] });
@@ -217,5 +278,36 @@ describe('DrawingML & Vector Shape Parser', () => {
     expect(triCmds[1]).toEqual({ type: 'lineTo', points: [60, 60] });
     expect(triCmds[2]).toEqual({ type: 'lineTo', points: [0, 60] });
     expect(triCmds[3]).toEqual({ type: 'close', points: [] });
+  });
+
+  it('gives a connector without a:ln the default theme outline and honors flipV (F-CONNECTOR)', () => {
+    const xml = `
+      <w:drawing xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                 xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                 xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                 xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+        <wp:anchor>
+          <wp:extent cx="914400" cy="914400"/>
+          <wp:docPr id="314" name=""/>
+          <a:graphic>
+            <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:wsp>
+                <wps:spPr>
+                  <a:xfrm flipV="1"><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>
+                  <a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom>
+                </wps:spPr>
+                <wps:style><a:lnRef idx="1"><a:schemeClr val="accent1"/></a:lnRef></wps:style>
+              </wps:wsp>
+            </a:graphicData>
+          </a:graphic>
+        </wp:anchor>
+      </w:drawing>
+    `;
+    const shape = parseDrawingNode(defaultXmlAdapter.parse(xml));
+    // No a:ln: Word draws the theme outline, so the connector is visible.
+    expect(shape?.stroke).toEqual({ color: '#000000', widthPt: 0.75 });
+    // flipV: bottom-left to top-right.
+    expect(shape?.commands[0]).toEqual({ type: 'moveTo', points: [0, 72] });
+    expect(shape?.commands[1]).toEqual({ type: 'lineTo', points: [72, 0] });
   });
 });

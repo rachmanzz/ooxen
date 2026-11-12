@@ -96,6 +96,35 @@ describe('Numbering Resolver & Multilevel Lists', () => {
     expect(bullet1?.format).toBe('bullet');
   });
 
+  it('should carry the numbering level rPr font onto the prefix (F-NUMFONT)', () => {
+    const numberingXml = `
+      <w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+        <w:abstractNum w:abstractNumId="9">
+          <w:lvl w:ilvl="0">
+            <w:start w:val="1"/>
+            <w:numFmt w:val="bullet"/>
+            <w:lvlText w:val="▪"/>
+            <w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr>
+            <w:rPr>
+              <w:rFonts w:ascii="Noto Sans Symbols" w:hAnsi="Noto Sans Symbols"/>
+              <w:sz w:val="20"/>
+            </w:rPr>
+          </w:lvl>
+        </w:abstractNum>
+        <w:num w:numId="9">
+          <w:abstractNumId w:val="9"/>
+        </w:num>
+      </w:numbering>
+    `;
+
+    const resolver = new StandardNumberingResolver();
+    resolver.parseNumberingXml(numberingXml);
+    const bullet = resolver.resolveNumbering(9, 0);
+    expect(bullet?.prefixText).toBe('▪');
+    expect(bullet?.prefixFontFamily).toBe('Noto Sans Symbols');
+    expect(bullet?.prefixFontSizePt).toBe(10);
+  });
+
   it('should resolve numbering within document XML paragraphs', () => {
     const numberingXml = `
       <w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -206,5 +235,46 @@ describe('Numbering resolver isolation (F-N12R)', () => {
 
     resolver.parseNumberingXml(startAt(7, 70, 1));
     expect(resolver.resolveNumbering(1, 0)?.prefixText).toBe('1.');
+  });
+
+  it('drops a symbol-encoded level font once the PUA bullet is normalized (F-NUMFONT)', () => {
+    const numberingXml = `
+      <w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+        <w:abstractNum w:abstractNumId="11">
+          <w:lvl w:ilvl="0">
+            <w:start w:val="1"/>
+            <w:numFmt w:val="bullet"/>
+            <w:lvlText w:val="\uF0A7"/>
+            <w:rPr><w:rFonts w:ascii="Wingdings" w:hAnsi="Wingdings"/></w:rPr>
+          </w:lvl>
+          <w:lvl w:ilvl="1">
+            <w:start w:val="1"/>
+            <w:numFmt w:val="bullet"/>
+            <w:lvlText w:val="\uF0B7"/>
+            <w:rPr><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol"/></w:rPr>
+          </w:lvl>
+          <w:lvl w:ilvl="2">
+            <w:start w:val="1"/>
+            <w:numFmt w:val="bullet"/>
+            <w:lvlText w:val="\uF076"/>
+            <w:rPr><w:rFonts w:ascii="Wingdings" w:hAnsi="Wingdings"/></w:rPr>
+          </w:lvl>
+        </w:abstractNum>
+        <w:num w:numId="11"><w:abstractNumId w:val="11"/></w:num>
+      </w:numbering>
+    `;
+    const resolver = new StandardNumberingResolver();
+    resolver.parseNumberingXml(numberingXml);
+    // Normalized to Unicode: Wingdings/Symbol have no glyph there.
+    const square = resolver.resolveNumbering(11, 0);
+    expect(square?.prefixText).toBe('▪');
+    expect(square?.prefixFontFamily).toBeUndefined();
+    const dot = resolver.resolveNumbering(11, 1);
+    expect(dot?.prefixText).toBe('•');
+    expect(dot?.prefixFontFamily).toBeUndefined();
+    // Unmapped PUA glyph keeps the symbol font that defines it.
+    const other = resolver.resolveNumbering(11, 2);
+    expect(other?.prefixText).toBe('\uF076');
+    expect(other?.prefixFontFamily).toBe('Wingdings');
   });
 });

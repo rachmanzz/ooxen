@@ -583,6 +583,10 @@ export class StandardWmlBuilder implements WmlBuilder {
         `            <wp:positionH relativeFrom="${escapeXml(anchor.horizontalFrom)}">${posH}</wp:positionH>`,
         `            <wp:positionV relativeFrom="${escapeXml(anchor.verticalFrom)}">${posV}</wp:positionV>`,
         `            <wp:extent cx="${cx}" cy="${cy}"/>`,
+        // CT_Anchor requires exactly one wrap element (ISO/IEC 29500-1
+        // §20.4.2.3); without it Word reports unreadable content. The
+        // layout model overlays floats without wrapping, so wrapNone.
+        '            <wp:wrapNone/>',
         `            <wp:docPr id="${escapeXml(id)}" name="${escapeXml(name)}" descr="${escapeXml(altText)}"/>`,
         '            <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">',
         '              <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">',
@@ -714,6 +718,7 @@ export class StandardWmlBuilder implements WmlBuilder {
           `            <wp:positionH relativeFrom="${escapeXml(shapeAnchor.horizontalFrom)}">${shapeAnchor.horizontalAlign ? `<wp:align>${escapeXml(shapeAnchor.horizontalAlign)}</wp:align>` : `<wp:posOffset>${Math.round(ptToEmu(shapeAnchor.horizontalOffsetPt))}</wp:posOffset>`}</wp:positionH>`,
           `            <wp:positionV relativeFrom="${escapeXml(shapeAnchor.verticalFrom)}">${shapeAnchor.verticalAlign ? `<wp:align>${escapeXml(shapeAnchor.verticalAlign)}</wp:align>` : `<wp:posOffset>${Math.round(ptToEmu(shapeAnchor.verticalOffsetPt))}</wp:posOffset>`}</wp:positionV>`,
           `            <wp:extent cx="${cx}" cy="${cy}"/>`,
+          '            <wp:wrapNone/>',
           `            <wp:docPr id="${escapeXml(id)}" name="${escapeXml(name)}"/>`,
         ]
       : [
@@ -1077,6 +1082,7 @@ export class StandardWmlBuilder implements WmlBuilder {
     const titlePgXml = section.properties.titlePg || section.headers?.first || section.footers?.first
       ? `${indent}  <w:titlePg/>`
       : '';
+
 
     const orientAttr = section.properties.orientation ? ` w:orient="${section.properties.orientation}"` : '';
     const typeXml = section.properties.type ? `${indent}  <w:type w:val="${section.properties.type}"/>` : '';

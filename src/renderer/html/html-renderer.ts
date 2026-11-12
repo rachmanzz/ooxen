@@ -12,7 +12,10 @@ import type {
   VectorPathCommand,
 } from '../../types/ast.js';
 import { uint8ArrayToBase64 } from '../../types/common.js';
+import { wmfPreviewDataUrl } from '../../parser/dml/wmf-preview.js';
 import { parseBorderStyle } from '../../layout/page-engine.js';
+import { defaultLineBreaker } from '../../layout/line-breaker.js';
+import type { ImageAnchor } from '../../types/ast.js';
 import { defaultStyleMapper, type StyleMapper } from './style-mapper.js';
 
 function escapeXml(text: string): string {
@@ -67,18 +70,108 @@ function commandsToSvgPath(commands: VectorPathCommand[]): string {
     .join(' ');
 }
 
+/**
+ * CSS for a floating drawing (F-HTMLFLOAT): the element overlays at its
+ * anchor position instead of joining the inline flow. Offsets resolve
+ * against the relatively positioned paragraph (`.ooxen-has-float`);
+ * page/margin-relative values are approximations from the content-box
+ * origin, matching the layout engine's overlay-only model (no wrapping).
+ */
+function floatPlacement(anchor: ImageAnchor, widthPt: number, heightPt: number): { classes: string[]; style: string } {
+  const classes = ['ooxen-float'];
+  if (anchor.behindDoc) classes.push('ooxen-behind-doc');
+
+  const alignH = anchor.horizontalAlign?.toLowerCase();
+  let hPos: string;
+  if (alignH === 'center') {
+    hPos = `left: calc(50% - ${widthPt / 2}pt);`;
+  } else if (alignH === 'right' || alignH === 'outside') {
+    hPos = 'right: 0;';
+  } else if (alignH) {
+    hPos = 'left: 0;';
+  } else {
+    hPos = `left: ${anchor.horizontalOffsetPt}pt;`;
+  }
+
+  const alignV = anchor.verticalAlign?.toLowerCase();
+  let vPos: string;
+  if (alignV === 'center') {
+    vPos = `top: calc(50% - ${heightPt / 2}pt);`;
+  } else if (alignV === 'bottom' || alignV === 'outside') {
+    vPos = 'bottom: 0;';
+  } else if (alignV) {
+    vPos = 'top: 0;';
+  } else {
+    vPos = `top: ${anchor.verticalOffsetPt}pt;`;
+  }
+  return { classes, style: `position: absolute; ${hPos} ${vPos}` };
+}
+
 export function renderShapeToSvg(shape: DrawingShapeNode): string {
   const d = commandsToSvgPath(shape.commands);
   const fill = shape.fill ? escapeXml(shape.fill) : 'none';
   const stroke = shape.stroke?.color ? escapeXml(shape.stroke.color) : 'none';
   const strokeWidth = shape.stroke?.widthPt ?? 1;
 
-  return `<svg class="ooxen-shape" width="${shape.widthPt}pt" height="${shape.heightPt}pt" viewBox="0 0 ${shape.widthPt} ${shape.heightPt}" xmlns="http://www.w3.org/2000/svg"><path d="${d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"/></svg>`;
+  // Floating shape textbox content renders inside the frame (F-TBXFLOAT).
+  // Inline shapes drain their paragraphs into the flow on parse, so
+  // drawing them here too would print the text twice. Lines come from
+  // the same line breaker the page engine uses, so wrapping, alignment,
+  // and insets match the canvas output.
+  let shapeText = '';
+  if (shape.anchor && shape.textbox && shape.textbox.length > 0) {
+    const insetX = 91440 / 12700;
+    const insetY = 45720 / 12700;
+    const innerWidth = Math.max(10, shape.widthPt - insetX * 2);
+    const parts: string[] = [];
+    let textY = 0;
+    for (const para of shape.textbox) {
+      let paraHeight = 0;
+      for (const line of defaultLineBreaker.breakParagraph(para, innerWidth)) {
+        const lineTop = insetY + textY + line.bounds.y;
+        // The breaker yields one fragment per word; adjacent fragments
+        // that share a run style merge back into one text element.
+        const groups: { x: number; text: string; style: typeof line.fragments[number]['style'] }[] = [];
+        for (const frag of line.fragments) {
+          if (frag.text.length === 0 || frag.isTab) continue;
+          const last = groups[groups.length - 1];
+          if (last && last.style === frag.style) last.text += frag.text;
+          else groups.push({ x: insetX + line.bounds.x + frag.bounds.x, text: frag.text, style: frag.style });
+        }
+        for (const group of groups) {
+          const size = group.style?.fontSizePt ?? 11;
+          const color = escapeXml(group.style?.color ?? '#000000');
+          const weight = group.style?.bold ? ' font-weight="bold"' : '';
+          const slant = group.style?.italic ? ' font-style="italic"' : '';
+          const family = group.style?.fontFamily ? ` font-family="${escapeXml(group.style.fontFamily)}"` : '';
+          const y = lineTop + line.baseline;
+          parts.push(
+            `<text x="${group.x.toFixed(2)}" y="${y.toFixed(2)}" font-size="${size}" fill="${color}"${family}${weight}${slant} xml:space="preserve">${escapeXml(group.text)}</text>`,
+          );
+        }
+        paraHeight += line.bounds.height;
+      }
+      textY += paraHeight;
+    }
+    shapeText = parts.join('');
+  }
+
+  const classes = ['ooxen-shape'];
+  let styleAttr = '';
+  if (shape.anchor) {
+    const placement = floatPlacement(shape.anchor, shape.widthPt, shape.heightPt);
+    classes.push(...placement.classes);
+    styleAttr = ` style="${placement.style}"`;
+  }
+
+  return `<svg class="${classes.join(' ')}" width="${shape.widthPt}pt" height="${shape.heightPt}pt" viewBox="0 0 ${shape.widthPt} ${shape.heightPt}"${styleAttr} xmlns="http://www.w3.org/2000/svg"><path d="${d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"/>${shapeText}</svg>`;
 }
 
 export function renderImageToHtml(image: ImageNode): string {
   const alt = image.altText ?? image.name ?? '';
-  let src = image.src;
+  // WMF metafile previews (legacy Equation Editor OLE) cannot be decoded
+  // by browsers, so they render through their converted SVG form (F-WMFEQ).
+  let src = wmfPreviewDataUrl(image) ?? image.src;
   if (!src && image.data && image.mimeType) {
     src = `data:${image.mimeType};base64,${uint8ArrayToBase64(image.data)}`;
   }
@@ -91,39 +184,10 @@ export function renderImageToHtml(image: ImageNode): string {
     return `<img class="ooxen-image"${srcAttr} alt="${escapeXml(alt)}" style="${sizeStyle}" />`;
   }
 
-  // Floating images overlay at their anchor position instead of joining the
-  // inline flow (F-HTMLFLOAT). Offsets resolve against the relatively
-  // positioned paragraph (`.ooxen-has-float`); page/margin-relative values
-  // are approximations from the content-box origin, matching the layout
-  // engine's overlay-only model (no text wrapping).
-  const classes = ['ooxen-image', 'ooxen-float'];
-  if (anchor.behindDoc) classes.push('ooxen-behind-doc');
-
-  const alignH = anchor.horizontalAlign?.toLowerCase();
-  let hPos: string;
-  if (alignH === 'center') {
-    hPos = `left: calc(50% - ${image.widthPt / 2}pt);`;
-  } else if (alignH === 'right' || alignH === 'outside') {
-    hPos = 'right: 0;';
-  } else if (alignH) {
-    hPos = 'left: 0;';
-  } else {
-    hPos = `left: ${anchor.horizontalOffsetPt}pt;`;
-  }
-
-  const alignV = anchor.verticalAlign?.toLowerCase();
-  let vPos: string;
-  if (alignV === 'center') {
-    vPos = `top: calc(50% - ${image.heightPt / 2}pt);`;
-  } else if (alignV === 'bottom' || alignV === 'outside') {
-    vPos = 'bottom: 0;';
-  } else if (alignV) {
-    vPos = 'top: 0;';
-  } else {
-    vPos = `top: ${anchor.verticalOffsetPt}pt;`;
-  }
-
-  return `<img class="${classes.join(' ')}"${srcAttr} alt="${escapeXml(alt)}" style="${sizeStyle} position: absolute; ${hPos} ${vPos}" />`;
+  // Floating images overlay at their anchor position (F-HTMLFLOAT).
+  const placement = floatPlacement(anchor, image.widthPt, image.heightPt);
+  const classes = ['ooxen-image', ...placement.classes];
+  return `<img class="${classes.join(' ')}"${srcAttr} alt="${escapeXml(alt)}" style="${sizeStyle} ${placement.style}" />`;
 }
 
 /**
@@ -293,7 +357,7 @@ export class StandardHtmlRenderer implements HtmlRenderer {
 
     const runsHtml = paragraph.children.map((run) => this.renderRun(run)).join('');
     // A paragraph hosting floats becomes their positioning context.
-    const floatClass = paragraph.children.some((run) => run.image?.anchor) ? ' ooxen-has-float' : '';
+    const floatClass = paragraph.children.some((run) => run.image?.anchor || run.drawing?.anchor) ? ' ooxen-has-float' : '';
     return `    <p class="ooxen-p${floatClass}"${idAttr}${styleAttr}>${prefixHtml}${runsHtml}</p>`;
   }
 

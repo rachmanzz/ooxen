@@ -49,4 +49,37 @@ describe('OOXML Paragraph Parser', () => {
     expect(run2?.style?.italic).toBe(true);
     expect(run2?.style?.underline).toBe(true);
   });
+
+  it('sizes the paragraph mark from the style chain when there is no direct rPr (F-PMARK)', async () => {
+    const { StandardStyleResolver } = await import('../../src/parser/wml/style-resolver.js');
+    const { defaultXmlAdapter } = await import('../../src/parser/xml-adapter.js');
+    const { StandardParagraphParser } = await import('../../src/parser/wml/paragraph-parser.js');
+    const stylesXml = `
+      <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+        <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults>
+        <w:style w:type="paragraph" w:styleId="Title">
+          <w:name w:val="Title"/>
+          <w:rPr><w:sz w:val="52"/></w:rPr>
+        </w:style>
+      </w:styles>`;
+    const resolver = new StandardStyleResolver();
+    resolver.loadStyles(defaultXmlAdapter.parse(stylesXml));
+    const parser = new StandardParagraphParser();
+    const styled = parser.parseParagraph(
+      defaultXmlAdapter.parse('<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:pPr><w:pStyle w:val="Title"/></w:pPr></w:p>'),
+      resolver,
+    );
+    expect(styled.style?.markFontSizePt).toBe(26);
+    const plain = parser.parseParagraph(
+      defaultXmlAdapter.parse('<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>'),
+      resolver,
+    );
+    expect(plain.style?.markFontSizePt).toBe(11);
+    // Direct paragraph-mark properties still win over the style.
+    const direct = parser.parseParagraph(
+      defaultXmlAdapter.parse('<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:pPr><w:pStyle w:val="Title"/><w:rPr><w:sz w:val="16"/></w:rPr></w:pPr></w:p>'),
+      resolver,
+    );
+    expect(direct.style?.markFontSizePt).toBe(8);
+  });
 });

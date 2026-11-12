@@ -64,6 +64,7 @@ export class StandardOoxenWriter implements OoxenWriter {
     // used in two parts reuses its id but gets a rel entry in each part.
     const seenImages = new Map<ImageNode, { relId: string; partName?: string; mimeType?: string }>();
     const seenLinkOwners = new Set<string>();
+    const seenMediaOwners = new Set<string>();
 
     const processImage = (img: ImageNode, ownerPart: string): void => {
       let rawData: Uint8Array | undefined = img.data;
@@ -89,7 +90,15 @@ export class StandardOoxenWriter implements OoxenWriter {
         const ext = mimeType.replace(/^image\//, '').replace(/\+xml$/, '') || 'png';
         const partName = seen?.partName ?? `word/media/image${mediaCounter++}.${ext}`;
         seenImages.set(img, { relId, partName, mimeType });
-        mediaParts.push({ partName, relationshipId: relId, contentType: mimeType, data: rawData, ownerPart });
+        // One entry per (owner part, image): the binary part is written
+        // once and each referencing part gets exactly one rel, so a logo
+        // repeated in the body and three headers is not registered four
+        // times over.
+        const ownerKey = `${ownerPart}${relId}`;
+        if (!seenMediaOwners.has(ownerKey)) {
+          seenMediaOwners.add(ownerKey);
+          mediaParts.push({ partName, relationshipId: relId, contentType: mimeType, data: rawData, ownerPart });
+        }
         return;
       }
 
@@ -257,6 +266,15 @@ export class StandardOoxenWriter implements OoxenWriter {
       undefined,
       requiredNumIds,
       hyperlinkRelIds,
+      {
+        // Explicit true, or a hand-built section (flag undefined) that
+        // supplies an even part and therefore means to use it (F-HDREVEN).
+        evenAndOddHeaders: doc.sections.some(
+          (s) =>
+            s.properties.evenAndOddHeaders === true ||
+            (s.properties.evenAndOddHeaders === undefined && (s.headers?.even !== undefined || s.footers?.even !== undefined)),
+        ),
+      },
     );
     return pkg.serialize();
   }

@@ -9,7 +9,7 @@ import type {
   TableNode,
 } from '../types/ast.js';
 import type { Margins, Rect, Size } from '../types/common.js';
-import { defaultLineBreaker, type LayoutLine, type LineBreaker } from './line-breaker.js';
+import { defaultLineBreaker, type LayoutLine, type LineBreaker, type LineFragment } from './line-breaker.js';
 
 /**
  * Geometric layout and pagination model according to ISO/IEC 29500-1.
@@ -323,6 +323,17 @@ export class StandardPageEngine implements PageEngine {
         }
       }
 
+      // A page resumed across a continuous break keeps the section it
+      // started in for header/footer resolution (F-HDRSEC): the resumed
+      // page still carries the previous section's content, so the first
+      // section on the page wins its header/footer. One-shot — later
+      // pages in this section use the current section. Clearing here is
+      // safe: the init above already consumed the resume state.
+      let pendingResumeSection = resumedMeta?.section;
+      resumedPage = undefined;
+      resumedMeta = undefined;
+      resumedUsedHeight = 0;
+
       const emitPage = (): void => {
         const fmtPageNum = formatPageNumber(currentLogicalPageNumber, currentNumberingFormat);
         const page: PageLayout = {
@@ -336,7 +347,8 @@ export class StandardPageEngine implements PageEngine {
           cellBoxes: currentCellBoxes.length > 0 ? currentCellBoxes : undefined,
         };
         pages.push(page);
-        pageMetas.push({ page, section, sectionPageIndex });
+        pageMetas.push({ page, section: pendingResumeSection ?? section, sectionPageIndex });
+        pendingResumeSection = undefined;
         currentLogicalPageNumber++;
         sectionPageIndex++;
         currentPageIndex++;
@@ -500,6 +512,12 @@ export class StandardPageEngine implements PageEngine {
           if (currentY + block.heightPt > contentHeight && (currentLines.length > 0 || currentColumnIndex > 0)) {
             onColumnOrPageOverflow();
           }
+          const blockDrawingFragment: LineFragment = {
+            text: '',
+            drawing: block,
+            bounds: { x: 0, y: 0, width: block.widthPt, height: block.heightPt },
+          };
+          this.layoutShapeText(blockDrawingFragment, block.widthPt);
           currentLines.push({
             bounds: {
               x: getActiveColStartX(),
@@ -507,13 +525,7 @@ export class StandardPageEngine implements PageEngine {
               width: block.widthPt,
               height: block.heightPt,
             },
-            fragments: [
-              {
-                text: '',
-                drawing: block,
-                bounds: { x: 0, y: 0, width: block.widthPt, height: block.heightPt },
-              },
-            ],
+            fragments: [blockDrawingFragment],
             baseline: block.heightPt,
           });
           currentY += block.heightPt;
@@ -557,42 +569,62 @@ export class StandardPageEngine implements PageEngine {
     }
 
     // Second pass, part 2: attach headerLines and footerLines with resolved totalPages and page numbers
+    // Sections without their own header/footer inherit the previous
+    // section's ("same as previous" is Word's default linkage).
+    const findPart = (
+      slot: 'headers' | 'footers',
+      sIdx: number,
+      kind: 'first' | 'even' | 'default',
+    ): HeaderFooterNode | undefined => {
+      for (let i = sIdx; i >= 0; i--) {
+        const node = document.sections[i]?.[slot]?.[kind];
+        if (node) return node;
+      }
+      return undefined;
+    };
+    const resolvePart = (
+      slot: 'headers' | 'footers',
+      sIdx: number,
+      section: SectionNode,
+      sectionPageIndex: number,
+      pageIndex: number,
+    ): HeaderFooterNode | undefined => {
+      if (sectionPageIndex === 0 && section.properties.titlePg) {
+        const first = findPart(slot, sIdx, 'first');
+        if (first) return first;
+      }
+      // true: use even parts; false (parsed package without the setting):
+      // ignore them; undefined (hand-built AST): an even part present
+      // means use it (F-HDREVEN).
+      if (pageIndex % 2 === 1 && section.properties.evenAndOddHeaders !== false) {
+        const even = findPart(slot, sIdx, 'even');
+        if (even) return even;
+      }
+      return findPart(slot, sIdx, 'default');
+    };
     const totalPages = pages.length;
     for (let mIdx = 0; mIdx < pageMetas.length; mIdx++) {
       const meta = pageMetas[mIdx]!;
       const { page, section, sectionPageIndex } = meta;
+      const sIdx = document.sections.indexOf(section);
       const contentWidth = Math.max(50, page.size.width - page.margins.left - page.margins.right);
       const pageNumStr = page.formattedPageNumber ?? String(page.pageNumber);
 
       // 1. Resolve header
-      let headerNode: HeaderFooterNode | undefined;
-      if (sectionPageIndex === 0 && section.properties.titlePg && section.headers?.first) {
-        headerNode = section.headers.first;
-      } else if (page.pageIndex % 2 === 1 && section.headers?.even) {
-        headerNode = section.headers.even;
-      } else {
-        headerNode = section.headers?.default;
-      }
+      const headerNode = resolvePart('headers', sIdx, section, sectionPageIndex, page.pageIndex);
 
       if (headerNode) {
         const headerDist = section.properties.headerDistancePt ?? 36;
-        page.headerLines = this.layoutHeaderFooter(headerNode, contentWidth, headerDist, page.margins, pageNumStr, totalPages);
+        page.headerLines = this.layoutHeaderFooter(headerNode, contentWidth, headerDist, page.margins, pageNumStr, totalPages, page.size.width, page.size.height, page.pageIndex);
       }
 
       // 2. Resolve footer
-      let footerNode: HeaderFooterNode | undefined;
-      if (sectionPageIndex === 0 && section.properties.titlePg && section.footers?.first) {
-        footerNode = section.footers.first;
-      } else if (page.pageIndex % 2 === 1 && section.footers?.even) {
-        footerNode = section.footers.even;
-      } else {
-        footerNode = section.footers?.default;
-      }
+      const footerNode = resolvePart('footers', sIdx, section, sectionPageIndex, page.pageIndex);
 
       if (footerNode) {
         const footerDist = section.properties.footerDistancePt ?? 36;
         const footerY = page.size.height - footerDist - 16;
-        page.footerLines = this.layoutHeaderFooter(footerNode, contentWidth, footerY, page.margins, pageNumStr, totalPages);
+        page.footerLines = this.layoutHeaderFooter(footerNode, contentWidth, footerY, page.margins, pageNumStr, totalPages, page.size.width, page.size.height, page.pageIndex);
       }
     }
 
@@ -723,6 +755,9 @@ export class StandardPageEngine implements PageEngine {
     margins: Margins,
     pageNumStr: string,
     totalPages: number,
+    pageWidthPt: number,
+    pageHeightPt: number,
+    pageIndex: number,
   ): LayoutLine[] {
     const lines: LayoutLine[] = [];
     let currentY = 0;
@@ -731,8 +766,12 @@ export class StandardPageEngine implements PageEngine {
       if (block.type === 'paragraph') {
         const resolvedParagraph = this.resolveFields(block, pageNumStr, totalPages);
         const pLines = this.lineBreaker.breakParagraph(resolvedParagraph, contentWidth);
+        // Content-relative top of this paragraph: floating fragments in
+        // headers/footers resolve against it exactly like body floats
+        // (F-HDRFLOAT), otherwise anchored shapes pile up inline.
+        const paragraphTop = baseY + currentY - margins.top;
         for (const line of pLines) {
-          lines.push({
+          const pageLine: LayoutLine = {
             bounds: {
               x: margins.left + line.bounds.x,
               y: baseY + currentY + line.bounds.y,
@@ -741,7 +780,14 @@ export class StandardPageEngine implements PageEngine {
             },
             baseline: line.baseline,
             fragments: line.fragments,
+          };
+          this.resolveFloatingFragments(pageLine, margins, paragraphTop, {
+            pageWidthPt,
+            pageHeightPt,
+            getPageIndex: () => pageIndex,
+            getColumnWidthPt: () => contentWidth,
           });
+          lines.push(pageLine);
           currentY += line.bounds.height;
         }
       }
@@ -866,7 +912,40 @@ export class StandardPageEngine implements PageEngine {
       frag.bounds.y = absY - pageLine.bounds.y;
       frag.bounds.width = imgW;
       frag.bounds.height = imgH;
+
+      this.layoutShapeText(frag, imgW);
     }
+  }
+
+  /**
+   * Lays floating shape textbox content inside the shape frame (DrawingML
+   * bodyPr default insets) instead of joining the flow, so banners keep
+   * their authored text without pushing later paragraphs down
+   * (F-TBXFLOAT). Called for body, header/footer, and table-cell lines.
+   */
+  private layoutShapeText(frag: LineFragment, shapeWidthPt: number): void {
+    const drawing = frag.drawing;
+    // Only floating shapes keep their text in the frame; inline shapes
+    // drained it into the flow on parse, and the HTML renderer applies
+    // the same gate, so neither renderer paints it twice (F-TBXFLOAT).
+    if (!drawing?.anchor || !drawing.textbox || drawing.textbox.length === 0) return;
+    const insetX = 91440 / 12700;
+    const insetY = 45720 / 12700;
+    const innerWidth = Math.max(10, shapeWidthPt - insetX * 2);
+    const shapeLines: LayoutLine[] = [];
+    let textY = 0;
+    for (const textPara of drawing.textbox) {
+      // Lines carry paragraph-relative y; shift by the running height of
+      // the paragraphs above, accumulated once per paragraph.
+      let paraHeight = 0;
+      for (const textLine of this.lineBreaker.breakParagraph(textPara, innerWidth)) {
+        textLine.bounds.y += textY;
+        paraHeight += textLine.bounds.height;
+        shapeLines.push(textLine);
+      }
+      textY += paraHeight;
+    }
+    frag.shapeText = { lines: shapeLines, x: insetX, y: insetY };
   }
 
   private layoutParagraph(
@@ -1121,8 +1200,9 @@ export class StandardPageEngine implements PageEngine {
         for (const child of cell.children) {
           if (child.type === 'paragraph') {
             const pLines = this.lineBreaker.breakParagraph(child, innerWidth);
+            const paragraphTop = cellY;
             for (const pl of pLines) {
-              cellLines.push({
+              const cellLine: LayoutLine = {
                 bounds: {
                   x: pl.bounds.x,
                   y: cellY + pl.bounds.y,
@@ -1131,10 +1211,23 @@ export class StandardPageEngine implements PageEngine {
                 },
                 fragments: pl.fragments,
                 baseline: pl.baseline,
-              });
+              };
+              // Floating drawings inside a cell resolve against the cell
+              // content box (column/paragraph-relative offsets; page and
+              // margin references are approximated from the cell origin)
+              // so their textbox text lays out in the frame instead of
+              // vanishing (F-TBXFLOAT).
+              this.resolveFloatingFragments(cellLine, { top: 0, right: 0, bottom: 0, left: 0 }, paragraphTop);
+              cellLines.push(cellLine);
               cellY += pl.bounds.height;
             }
           } else if (child.type === 'drawing') {
+            const drawingFragment: LineFragment = {
+              text: '',
+              drawing: child,
+              bounds: { x: 0, y: 0, width: child.widthPt, height: child.heightPt },
+            };
+            this.layoutShapeText(drawingFragment, child.widthPt);
             cellLines.push({
               bounds: {
                 x: 0,
@@ -1142,13 +1235,7 @@ export class StandardPageEngine implements PageEngine {
                 width: child.widthPt,
                 height: child.heightPt,
               },
-              fragments: [
-                {
-                  text: '',
-                  drawing: child,
-                  bounds: { x: 0, y: 0, width: child.widthPt, height: child.heightPt },
-                },
-              ],
+              fragments: [drawingFragment],
               baseline: child.heightPt,
             });
             cellY += child.heightPt;

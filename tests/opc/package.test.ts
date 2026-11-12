@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { KNOWN_CONTENT_TYPES } from '../../src/opc/content-types.js';
-import { createPackage, openPackage } from '../../src/opc/package.js';
+import { createPackage, openPackage, resolvePartTarget } from '../../src/opc/package.js';
 import { KNOWN_RELATIONSHIPS } from '../../src/opc/relationships.js';
 
 describe('OPC Package Integration', () => {
@@ -91,13 +91,24 @@ describe('OPC Package Integration', () => {
     const encoder = new TextEncoder();
     pkg.setPart({ name: 'word/media/x.png', contentType: 'image/png', data: encoder.encode('x') });
 
-    // Part-relative targets that climb with .. must resolve like real OPC stacks do.
-    expect(pkg.getPart('word/../media/x.png')).toBeDefined();
-    expect(pkg.getPart('word/sub/../../media/x.png')).toBeDefined();
+    // Dot segments collapse with plain URI semantics: .. climbs toward
+    // the package root and never clamps inside the leading segment.
+    expect(pkg.getPart('word/sub/../media/x.png')).toBeDefined();
+    expect(pkg.getPart('word/sub/deeper/../../media/x.png')).toBeDefined();
     expect(pkg.getPart('word/./media/x.png')).toBeDefined();
+    expect(pkg.getPart('word/../media/x.png')).toBeUndefined();
+    expect(pkg.getPart('word/../word/media/x.png')).toBeDefined();
     // Absolute lookups keep working.
     expect(pkg.getPart('/word/media/x.png')).toBeDefined();
     // Writing traversal names is still rejected.
     expect(() => pkg.setPart({ name: '../evil.xml', contentType: 'text/xml', data: encoder.encode('e') })).toThrow();
+  });
+
+  it('resolves relationship targets against the source part directory (F-PDOT-URI)', () => {
+    expect(resolvePartTarget('word/document.xml', 'media/image1.png')).toBe('word/media/image1.png');
+    expect(resolvePartTarget('word/document.xml', '../docProps/thumbnail.jpeg')).toBe('docProps/thumbnail.jpeg');
+    expect(resolvePartTarget('word/glossary/document.xml', '../media/image1.png')).toBe('word/media/image1.png');
+    expect(resolvePartTarget('word/document.xml', '/word/styles.xml')).toBe('word/styles.xml');
+    expect(resolvePartTarget('document.xml', 'styles.xml')).toBe('styles.xml');
   });
 });

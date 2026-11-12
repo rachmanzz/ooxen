@@ -88,6 +88,229 @@ describe('ISO/IEC 29500 Section Break Layout Engine', () => {
     expect(combinedText).toContain('Section 2 continuous paragraph');
   });
 
+  it('should keep the first section header on a page resumed across a continuous break (F-HDRSEC)', () => {
+    const header = (text: string) => ({
+      type: 'header' as const,
+      kind: 'default' as const,
+      children: [
+        {
+          type: 'paragraph' as const,
+          children: [{ type: 'run' as const, text }],
+        },
+      ],
+    });
+    const doc: DocumentNode = {
+      type: 'document',
+      sections: [
+        {
+          type: 'section',
+          properties: {
+            pageSize: { width: 612, height: 792 },
+            margins: { top: 72, right: 72, bottom: 72, left: 72 },
+          },
+          headers: { default: header('H0') },
+          children: [
+            {
+              type: 'paragraph',
+              children: [{ type: 'run', text: 'Section 1 paragraph' }],
+            },
+          ],
+        },
+        {
+          type: 'section',
+          properties: {
+            pageSize: { width: 612, height: 792 },
+            margins: { top: 72, right: 72, bottom: 72, left: 72 },
+            type: 'continuous',
+          },
+          headers: { default: header('H1') },
+          children: [
+            {
+              type: 'paragraph',
+              children: [{ type: 'run', text: 'Section 2 paragraph' }],
+            },
+          ],
+        },
+      ],
+    };
+
+    const engine = new StandardPageEngine();
+    const pages = engine.layoutDocument(doc);
+
+    expect(pages.length).toBe(1);
+    const headerText = (pages[0]?.headerLines ?? []).map((l) => l.fragments.map((f) => f.text).join('')).join(' ');
+    expect(headerText).toContain('H0');
+    expect(headerText).not.toContain('H1');
+  });
+
+  it('should inherit the previous section header when a section defines none', () => {
+    const header = (text: string) => ({
+      type: 'header' as const,
+      kind: 'default' as const,
+      children: [
+        {
+          type: 'paragraph' as const,
+          children: [{ type: 'run' as const, text }],
+        },
+      ],
+    });
+    const doc: DocumentNode = {
+      type: 'document',
+      sections: [
+        {
+          type: 'section',
+          properties: {
+            pageSize: { width: 612, height: 792 },
+            margins: { top: 72, right: 72, bottom: 72, left: 72 },
+          },
+          headers: { default: header('H0') },
+          children: [
+            {
+              type: 'paragraph',
+              children: [{ type: 'run', text: 'First section, enough text to fill the first page. '.repeat(40) }],
+            },
+          ],
+        },
+        {
+          type: 'section',
+          properties: {
+            pageSize: { width: 612, height: 792 },
+            margins: { top: 72, right: 72, bottom: 72, left: 72 },
+          },
+          children: [
+            {
+              type: 'paragraph',
+              children: [{ type: 'run', text: 'Second section with no header of its own' }],
+            },
+          ],
+        },
+      ],
+    };
+
+    const engine = new StandardPageEngine();
+    const pages = engine.layoutDocument(doc);
+
+    expect(pages.length).toBeGreaterThan(1);
+    const lastHeader = (pages[pages.length - 1]?.headerLines ?? []).map((l) => l.fragments.map((f) => f.text).join('')).join(' ');
+    expect(lastHeader).toContain('H0');
+  });
+
+  it('should not use the even header without the evenAndOddHeaders setting (F-HDREVEN)', () => {
+    const header = (kind: 'default' | 'even', text: string) => ({
+      type: 'header' as const,
+      kind,
+      children: [
+        {
+          type: 'paragraph' as const,
+          children: [{ type: 'run' as const, text }],
+        },
+      ],
+    });
+    const doc: DocumentNode = {
+      type: 'document',
+      sections: [
+        {
+          type: 'section',
+          properties: {
+            pageSize: { width: 612, height: 200 },
+            margins: { top: 36, right: 72, bottom: 36, left: 72 },
+            // A parsed package records the absent settings switch as false.
+            evenAndOddHeaders: false,
+          },
+          headers: { default: header('default', 'H-default'), even: header('even', 'H-even') },
+          children: [
+            {
+              type: 'paragraph',
+              children: [{ type: 'run' as const, text: 'Body text. '.repeat(160) }],
+            },
+          ],
+        },
+      ],
+    };
+
+    const engine = new StandardPageEngine();
+    const pages = engine.layoutDocument(doc);
+
+    expect(pages.length).toBeGreaterThan(1);
+    const headerText = (idx: number): string =>
+      (pages[idx]?.headerLines ?? []).map((l) => l.fragments.map((f) => f.text).join('')).join(' ');
+    expect(headerText(0)).toContain('H-default');
+    // Setting off: even pages keep the default header, the way reference
+    // renderers ignore unused even parts.
+    expect(headerText(1)).toContain('H-default');
+    expect(headerText(1)).not.toContain('H-even');
+  });
+
+  it('honors an even header on a hand-built section with no settings flag (F-HDREVEN)', () => {
+    const header = (kind: 'default' | 'even', text: string) => ({
+      type: 'header' as const,
+      kind,
+      children: [{ type: 'paragraph' as const, children: [{ type: 'run' as const, text }] }],
+    });
+    const doc: DocumentNode = {
+      type: 'document',
+      sections: [
+        {
+          type: 'section',
+          properties: {
+            pageSize: { width: 612, height: 200 },
+            margins: { top: 36, right: 72, bottom: 36, left: 72 },
+          },
+          headers: { default: header('default', 'H-default'), even: header('even', 'H-even') },
+          children: [{ type: 'paragraph', children: [{ type: 'run' as const, text: 'Body text. '.repeat(160) }] }],
+        },
+      ],
+    };
+    const pages = new StandardPageEngine().layoutDocument(doc);
+    expect(pages.length).toBeGreaterThan(1);
+    const headerText = (idx: number): string =>
+      (pages[idx]?.headerLines ?? []).map((l) => l.fragments.map((f) => f.text).join('')).join(' ');
+    // Public-AST callers that supply an even part mean to use it.
+    expect(headerText(1)).toContain('H-even');
+  });
+
+  it('should use the even header on even pages with the evenAndOddHeaders setting (F-HDREVEN)', () => {
+    const header = (kind: 'default' | 'even', text: string) => ({
+      type: 'header' as const,
+      kind,
+      children: [
+        {
+          type: 'paragraph' as const,
+          children: [{ type: 'run' as const, text }],
+        },
+      ],
+    });
+    const doc: DocumentNode = {
+      type: 'document',
+      sections: [
+        {
+          type: 'section',
+          properties: {
+            pageSize: { width: 612, height: 200 },
+            margins: { top: 36, right: 72, bottom: 36, left: 72 },
+            evenAndOddHeaders: true,
+          },
+          headers: { default: header('default', 'H-default'), even: header('even', 'H-even') },
+          children: [
+            {
+              type: 'paragraph',
+              children: [{ type: 'run' as const, text: 'Body text. '.repeat(160) }],
+            },
+          ],
+        },
+      ],
+    };
+
+    const engine = new StandardPageEngine();
+    const pages = engine.layoutDocument(doc);
+
+    expect(pages.length).toBeGreaterThan(1);
+    const headerText = (idx: number): string =>
+      (pages[idx]?.headerLines ?? []).map((l) => l.fragments.map((f) => f.text).join('')).join(' ');
+    expect(headerText(0)).toContain('H-default');
+    expect(headerText(1)).toContain('H-even');
+  });
+
   it('should insert blank pages for evenPage and oddPage section breaks', () => {
     const doc: DocumentNode = {
       type: 'document',

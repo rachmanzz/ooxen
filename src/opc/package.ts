@@ -47,20 +47,36 @@ export function isValidPartName(name: string): boolean {
 
 function normalizePartName(name: string): string {
   // Collapse dot segments so part-relative targets that climb with ../
-  // resolve (F-PDOT-URI). Relationship targets are resolved against the
-  // word/ directory, so a .. that would pop the leading segment clamps
-  // instead of escaping it: word/../media/x.png -> word/media/x.png.
-  // Write-path validation still rejects traversal names up front.
+  // resolve (F-PDOT-URI) with plain RFC 3986 semantics: a .. at the top
+  // lands on the package root (word/../docProps/thumbnail.jpeg ->
+  // docProps/thumbnail.jpeg), never clamps inside the leading segment.
+  // Callers resolve relationship targets against the source part's
+  // directory first; write-path validation rejects traversal names.
   const out: string[] = [];
   for (const seg of name.replace(/\\/g, '/').replace(/^\/+/, '').split('/')) {
     if (seg === '' || seg === '.') continue;
     if (seg === '..') {
-      if (out.length > 1) out.pop();
+      out.pop();
       continue;
     }
     out.push(seg);
   }
   return out.join('/');
+}
+
+/**
+ * Resolves a relationship target against its source part, the way OPC
+ * resolves relative references (ISO/IEC 29500-2 §9.3.2): relative targets
+ * join the source part's directory, absolute ones are package-rooted.
+ * Dot segments collapse on lookup through `normalizePartName`.
+ */
+export function resolvePartTarget(sourcePart: string, target: string): string {
+  const t = target.replace(/\\/g, '/');
+  if (t.startsWith('/')) return normalizePartName(t);
+  const src = sourcePart.replace(/\\/g, '/').replace(/^\/+/, '');
+  const slash = src.lastIndexOf('/');
+  const dir = slash >= 0 ? src.slice(0, slash + 1) : '';
+  return normalizePartName(`${dir}${t}`);
 }
 
 export class StandardOpcPackage implements OpcPackage {

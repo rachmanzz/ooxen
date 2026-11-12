@@ -51,18 +51,18 @@ export function isTextNode(node: XmlNode): boolean {
   return node.kind === 'text';
 }
 
+const NAMED_ENTITIES: Record<string, string> = { quot: '"', apos: "'", lt: '<', gt: '>', amp: '&' };
+
 function decodeXmlEntities(text: string): string {
-  // Numeric references decode first so an escaped &amp;#65; stays literal
-  // instead of double-decoding (F-PENT-REF). Out-of-range or surrogate
+  // One pass over every reference form (F-PENT-REF): sequential passes
+  // let the output of one reference join the input of the next, so
+  // &amp;#65; or &#38;lt; would double-decode. Out-of-range or surrogate
   // code points are left literal.
-  return text
-    .replace(/&#([0-9]+);/g, (m, d: string) => decodeCodePoint(parseInt(d, 10)) ?? m)
-    .replace(/&#x([0-9a-fA-F]+);/g, (m, h: string) => decodeCodePoint(parseInt(h, 16)) ?? m)
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&');
+  return text.replace(/&(?:#([0-9]+)|#x([0-9a-fA-F]+)|(quot|apos|lt|gt|amp));/g, (m, dec: string | undefined, hex: string | undefined, name: string | undefined) => {
+    if (dec !== undefined) return decodeCodePoint(parseInt(dec, 10)) ?? m;
+    if (hex !== undefined) return decodeCodePoint(parseInt(hex, 16)) ?? m;
+    return name !== undefined ? (NAMED_ENTITIES[name] ?? m) : m;
+  });
 }
 
 function decodeCodePoint(cp: number): string | undefined {

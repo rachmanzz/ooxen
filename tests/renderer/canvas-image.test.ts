@@ -170,4 +170,62 @@ describe('Canvas image loading', () => {
     const viaUndefined = await preloadDocumentImages(doc, async () => undefined);
     expect(viaUndefined).toEqual({ loaded: 0, failed: 1, skipped: false });
   });
+
+  it('draws WMF equation previews as vectors (F-WMFEQ)', async () => {
+    const { parseWmfPreview } = await import('../../src/parser/dml/wmf-preview.js');
+    const u16 = (v: number): number[] => [v & 0xff, (v >> 8) & 0xff];
+    const wmf = new Uint8Array([
+      0xd7, 0xcd, 0xc6, 0x9a, 0x00, 0x00,
+      ...u16(0), ...u16(0), ...u16(1000), ...u16(1000),
+      ...u16(1440), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x08, 0x00, 0x00, 0x00, 0x32, 0x0a,
+      ...u16(100), ...u16(100), ...u16(2), ...u16(0),
+      0x48, 0x69,
+    ]);
+    const preview = parseWmfPreview(wmf);
+    expect(preview).toBeDefined();
+    const target = new StrictCanvasTarget();
+    new StandardDrawPrimitives().drawWmfPreview(target, preview!, 10, 20, 50, 50);
+    expect(target.texts).toEqual(['Hi']);
+    expect(target.order).toEqual(['text']);
+  });
+
+  it('falls back to drawImage when custom primitives lack drawWmfPreview (F-WMFEQ)', async () => {
+    const { StandardPageRenderer } = await import('../../src/renderer/canvas/page-renderer.js');
+    const u16 = (v: number): number[] => [v & 0xff, (v >> 8) & 0xff];
+    const wmf = new Uint8Array([
+      0xd7, 0xcd, 0xc6, 0x9a, 0x00, 0x00,
+      ...u16(0), ...u16(0), ...u16(1000), ...u16(1000),
+      ...u16(1440), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x08, 0x00, 0x00, 0x00, 0x32, 0x0a,
+      ...u16(100), ...u16(100), ...u16(2), ...u16(0),
+      0x48, 0x69,
+    ]);
+    const image: ImageNode = { type: 'image', name: 'eq.wmf', widthPt: 50, heightPt: 50, data: wmf, mimeType: 'image/x-wmf' };
+    const calls: string[] = [];
+    const standard = new StandardDrawPrimitives();
+    // A consumer-supplied primitives object written before drawWmfPreview existed.
+    const primitives = {
+      drawText: standard.drawText.bind(standard),
+      drawRect: standard.drawRect.bind(standard),
+      drawShape: standard.drawShape.bind(standard),
+      drawImage: () => { calls.push('image'); },
+      drawLeader: standard.drawLeader.bind(standard),
+      drawCellBox: standard.drawCellBox.bind(standard),
+      drawBorderLine: standard.drawBorderLine.bind(standard),
+    };
+    const renderer = new StandardPageRenderer(primitives);
+    renderer.renderPage(
+      {
+        pageIndex: 0,
+        pageNumber: 1,
+        orientation: 'portrait',
+        size: { width: 612, height: 792 },
+        margins: { top: 72, right: 72, bottom: 72, left: 72 },
+        lines: [{ bounds: { x: 72, y: 72, width: 50, height: 50 }, baseline: 40, fragments: [{ text: '', image, bounds: { x: 0, y: 0, width: 50, height: 50 } }] }],
+      },
+      new StrictCanvasTarget(),
+    );
+    expect(calls).toEqual(['image']);
+  });
 });

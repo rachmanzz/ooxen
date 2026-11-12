@@ -50,9 +50,15 @@ export function parseVmlSize(styleAttr?: string): { widthPt: number; heightPt: n
 /**
  * Generates vector path commands for standard preset DrawingML shapes.
  */
+function isTruthyAttr(value: string | undefined): boolean {
+  return value === '1' || value === 'true';
+}
+
 export function generatePresetGeometry(preset: string, widthPt: number, heightPt: number): VectorPathCommand[] {
   const w = Math.max(1, widthPt);
-  const h = Math.max(1, heightPt);
+  // Height may be zero: a straight connector with zero xfrm height is a
+  // truly horizontal line, not a 1pt-tall diagonal (F-CONNECTOR).
+  const h = Math.max(0, heightPt);
 
   switch (preset.toLowerCase()) {
     case 'rect':
@@ -389,9 +395,22 @@ export function parseDrawingNode(node: XmlNode): DrawingShapeNode | undefined {
       }
     }
 
-    // Defaults if missing
-    if (widthPt === 0) widthPt = 100;
-    if (heightPt === 0) heightPt = 100;
+    const prstGeom = spPr?.children.find((c) => c.nodeName.toLowerCase().endsWith('prstgeom'));
+    const prst = prstGeom?.attributes['prst'] ?? 'rect';
+    const isConnector = prst.toLowerCase().startsWith('straightconnector');
+    const ln = spPr?.children.find((c) => c.nodeName.toLowerCase().endsWith('ln'));
+
+    // Defaults if missing. A straight connector with a zero extent is a
+    // real horizontal/vertical line (Word writes cy="0"): its box is only
+    // as thick as its stroke, never the 100pt placeholder (F-CONNECTOR).
+    if (isConnector) {
+      const thickness = Math.max(0.75, parseEmu(ln?.attributes['w']) || 1);
+      if (widthPt === 0) widthPt = thickness;
+      if (heightPt === 0) heightPt = thickness;
+    } else {
+      if (widthPt === 0) widthPt = 100;
+      if (heightPt === 0) heightPt = 100;
+    }
 
     // Fill
     let fill: string | undefined;
@@ -402,12 +421,17 @@ export function parseDrawingNode(node: XmlNode): DrawingShapeNode | undefined {
 
     // Stroke (<a:noFill/> means no outline, not a default black stroke)
     let stroke: { color: string; widthPt: number } | undefined;
-    const ln = spPr?.children.find((c) => c.nodeName.toLowerCase().endsWith('ln'));
     if (ln && !ln.children.some((c) => c.nodeName.toLowerCase().endsWith('nofill'))) {
       const lnW = parseEmu(ln.attributes['w']) || 1;
       const lnSolidFill = ln.children.find((c) => c.nodeName.toLowerCase().endsWith('solidfill'));
       const strokeClr = parseHexColor(lnSolidFill) ?? '#000000';
       stroke = { color: strokeClr, widthPt: lnW };
+    } else if (!ln && isConnector) {
+      // Word omits a:ln on default-formatted connectors and takes the
+      // outline from wps:style/a:lnRef (theme line, 0.75pt black). A
+      // connector is nothing but its outline, so it needs that default
+      // or it vanishes (F-CONNECTOR).
+      stroke = { color: '#000000', widthPt: 0.75 };
     }
 
     // Geometry (straight connectors are lines, not boxes)
@@ -416,13 +440,31 @@ export function parseDrawingNode(node: XmlNode): DrawingShapeNode | undefined {
     if (custGeom) {
       commands = parseCustomGeometry(custGeom, widthPt, heightPt);
     } else {
-      const prstGeom = spPr?.children.find((c) => c.nodeName.toLowerCase().endsWith('prstgeom'));
-      const prst = prstGeom?.attributes['prst'] ?? 'rect';
-      commands = generatePresetGeometry(
-        prst.toLowerCase().startsWith('straightconnector') ? 'line' : prst,
-        widthPt,
-        heightPt,
-      );
+      let geoW = widthPt;
+      let geoH = heightPt;
+      let flipH = false;
+      let flipV = false;
+      if (isConnector) {
+        // Connectors draw in xfrm space: a zero cy means a truly
+        // horizontal 1pt line, not a 1pt-tall diagonal (F-CONNECTOR).
+        const xfrm = spPr?.children.find((c) => c.nodeName.toLowerCase().endsWith('xfrm'));
+        const ext = xfrm?.children.find((c) => c.nodeName.toLowerCase().endsWith('ext'));
+        if (ext) {
+          geoW = parseEmu(ext.attributes['cx']) || geoW;
+          geoH = parseEmu(ext.attributes['cy']);
+        }
+        flipH = isTruthyAttr(xfrm?.attributes['flipH']);
+        flipV = isTruthyAttr(xfrm?.attributes['flipV']);
+      }
+      commands = generatePresetGeometry(isConnector ? 'line' : prst, geoW, geoH);
+      if (flipH || flipV) {
+        // The preset line runs top-left to bottom-right; a:xfrm flips
+        // mirror it inside its own box (bottom-left to top-right, ...).
+        commands = commands.map((cmd) => ({
+          ...cmd,
+          points: cmd.points.map((v, i) => (i % 2 === 0 ? (flipH ? geoW - v : v) : flipV ? geoH - v : v)),
+        }));
+      }
     }
 
     // Floating placement (wp:anchor): resolved by the layout engine like images.

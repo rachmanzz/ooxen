@@ -51,9 +51,10 @@ export interface DrawingShapeNode extends BaseASTNode {
   };
   /**
    * Textbox paragraphs (`wps:txbx`/`w:txbxContent`) owned by the shape.
-   * The parser also drains a copy into the surrounding flow so the text
-   * renders in today's shape-text-less layout; the writer emits this copy
-   * back inside `wps:txbx` so the shape/text association round-trips.
+   * Floating shape text stays on the shape and renders inside its frame
+   * (F-TBXFLOAT); inline shape text additionally drains into the
+   * surrounding flow. The writer emits the stashed copy back inside
+   * `wps:txbx` so the shape/text association round-trips.
    */
   textbox?: ParagraphNode[];
   /**
@@ -226,6 +227,7 @@ export interface SectionProperties {
   headerDistancePt?: number; // distance from top of page to header (default: 36 pt / 720 twips)
   footerDistancePt?: number; // distance from bottom of page to footer (default: 36 pt / 720 twips)
   titlePg?: boolean; // whether first page has different header/footer
+  evenAndOddHeaders?: boolean; // whether even pages use the even header/footer (F-HDREVEN)
   columns?: SectionColumns;
   type?: SectionBreakType;
   orientation?: PageOrientation;

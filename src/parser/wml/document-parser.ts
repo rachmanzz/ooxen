@@ -13,7 +13,7 @@ import type {
   SectionProperties,
 } from '../../types/ast.js';
 import { twipsToPt } from '../../types/common.js';
-import { openPackage, type OpcPackage } from '../../opc/package.js';
+import { openPackage, resolvePartTarget, type OpcPackage } from '../../opc/package.js';
 import { loadEmbeddedFonts } from '../../fonts/font-table-loader.js';
 import { KNOWN_RELATIONSHIPS, type OpcRelationship } from '../../opc/relationships.js';
 import { parsePackageMetadata } from '../metadata/metadata-parser.js';
@@ -208,13 +208,22 @@ export function parseSectionProperties(node?: XmlNode): SectionProperties {
 }
 
 /**
- * Resolves a relationship target to a part path under word/. Targets may be
- * stored already rooted ("word/styles.xml") — joining unconditionally would
- * produce "word/word/..." and miss the part (v2 N10).
+ * Resolves a relationship target against its source part (so a target
+ * that climbs with ../ lands where OPC says it does). Some writers store
+ * targets already rooted ("word/styles.xml"): joining those against the
+ * source directory would produce "word/word/..." and miss the part
+ * (v2 N10), so a target that already names an existing part wins.
  */
-function resolveWordPartPath(target: string | undefined, fallback: string): string {
+function resolveRelTarget(pkg: OpcPackage, sourcePart: string, target: string): string {
+  const resolved = resolvePartTarget(sourcePart, target);
+  if (pkg.getPart(resolved)) return resolved;
+  const rooted = target.replace(/^\/+/, '');
+  return pkg.getPart(rooted) ? rooted : resolved;
+}
+
+function resolveWordPartPath(pkg: OpcPackage, sourcePart: string, target: string | undefined, fallback: string): string {
   if (!target) return fallback;
-  return target.startsWith('word/') ? target : `word/${target.replace(/^\/+/, '')}`;
+  return resolveRelTarget(pkg, sourcePart, target);
 }
 
 export class StandardDocumentParser implements DocumentParser {
@@ -410,7 +419,7 @@ export class StandardDocumentParser implements DocumentParser {
     let styleResolver: StyleResolver | undefined;
     const docRels = pkg.getRelationships(docPartPath);
     const stylesRel = docRels.find((r) => r.type === KNOWN_RELATIONSHIPS.STYLES);
-    const stylesPartPath = resolveWordPartPath(stylesRel?.target, 'word/styles.xml');
+    const stylesPartPath = resolveWordPartPath(pkg, docPartPath, stylesRel?.target, 'word/styles.xml');
     const stylesPart = pkg.getPart(stylesPartPath);
     // Keep the raw source part verbatim: it round-trips back into the
     // written package so Word-authored definitions survive (F-STYLELOSS).
@@ -426,7 +435,7 @@ export class StandardDocumentParser implements DocumentParser {
     // 3. Resolve numbering
     let numberingResolver: NumberingResolver | undefined;
     const numRel = docRels.find((r) => r.type === KNOWN_RELATIONSHIPS.NUMBERING);
-    const numPartPath = resolveWordPartPath(numRel?.target, 'word/numbering.xml');
+    const numPartPath = resolveWordPartPath(pkg, docPartPath, numRel?.target, 'word/numbering.xml');
     const numPart = pkg.getPart(numPartPath);
     const customNumberingXml = numPart ? textDecoder.decode(numPart.data) : undefined;
     if (numPart) {
@@ -442,12 +451,13 @@ export class StandardDocumentParser implements DocumentParser {
     // document map would both drop part-local images and risk matching
     // an unrelated same-id relationship from another part.
     const buildImageMap = (
+      sourcePart: string,
       rels: OpcRelationship[],
     ): Map<string, { data?: Uint8Array; mimeType?: string; name?: string }> => {
       const map = new Map<string, { data?: Uint8Array; mimeType?: string; name?: string }>();
       for (const rel of rels) {
         if (rel.type === KNOWN_RELATIONSHIPS.IMAGE) {
-          const imgPath = rel.target.startsWith('word/') ? rel.target : `word/${rel.target.replace(/^\/+/, '')}`;
+          const imgPath = resolveRelTarget(pkg, sourcePart, rel.target);
           const imgPart = pkg.getPart(imgPath);
           if (imgPart) {
             map.set(rel.id, {
@@ -465,7 +475,7 @@ export class StandardDocumentParser implements DocumentParser {
     ): ImageResolver => ({
       resolveImage: (relId) => map.get(relId),
     });
-    const imageResolver = resolverFor(buildImageMap(docRels));
+    const imageResolver = resolverFor(buildImageMap(docPartPath, docRels));
 
     // Relationship ids are scoped per part: a header, footer, footnote,
     // endnote, or comment resolves its hyperlink rIds against its OWN
@@ -487,19 +497,19 @@ export class StandardDocumentParser implements DocumentParser {
     const footerMap = new Map<string, HeaderFooterNode>();
     for (const rel of docRels) {
       if (rel.type === KNOWN_RELATIONSHIPS.HEADER) {
-        const hPath = rel.target.startsWith('word/') ? rel.target : `word/${rel.target.replace(/^\/+/, '')}`;
+        const hPath = resolveRelTarget(pkg, docPartPath, rel.target);
         const hPart = pkg.getPart(hPath);
         if (hPart) {
           const hXml = parseWithMarkupCompatibility(textDecoder.decode(hPart.data), (xml) => defaultXmlAdapter.parse(xml));
-          const hNode = parseHeaderFooterNode(hXml, 'default', styleResolver, numberingResolver, resolverFor(buildImageMap(pkg.getRelationships(hPath))), hyperlinkResolverFor(pkg.getRelationships(hPath)));
+          const hNode = parseHeaderFooterNode(hXml, 'default', styleResolver, numberingResolver, resolverFor(buildImageMap(hPath, pkg.getRelationships(hPath))), hyperlinkResolverFor(pkg.getRelationships(hPath)));
           headerMap.set(rel.id, hNode);
         }
       } else if (rel.type === KNOWN_RELATIONSHIPS.FOOTER) {
-        const fPath = rel.target.startsWith('word/') ? rel.target : `word/${rel.target.replace(/^\/+/, '')}`;
+        const fPath = resolveRelTarget(pkg, docPartPath, rel.target);
         const fPart = pkg.getPart(fPath);
         if (fPart) {
           const fXml = parseWithMarkupCompatibility(textDecoder.decode(fPart.data), (xml) => defaultXmlAdapter.parse(xml));
-          const fNode = parseHeaderFooterNode(fXml, 'default', styleResolver, numberingResolver, resolverFor(buildImageMap(pkg.getRelationships(fPath))), hyperlinkResolverFor(pkg.getRelationships(fPath)));
+          const fNode = parseHeaderFooterNode(fXml, 'default', styleResolver, numberingResolver, resolverFor(buildImageMap(fPath, pkg.getRelationships(fPath))), hyperlinkResolverFor(pkg.getRelationships(fPath)));
           footerMap.set(rel.id, fNode);
         }
       }
@@ -515,28 +525,28 @@ export class StandardDocumentParser implements DocumentParser {
     // 7. Resolve footnotes & endnotes
     let footnotes: FootnoteNode[] | undefined;
     const fnRel = docRels.find((r) => r.type === KNOWN_RELATIONSHIPS.FOOTNOTES);
-    const fnPath = resolveWordPartPath(fnRel?.target, 'word/footnotes.xml');
+    const fnPath = resolveWordPartPath(pkg, docPartPath, fnRel?.target, 'word/footnotes.xml');
     const fnPart = pkg.getPart(fnPath);
     if (fnPart) {
       footnotes = parseFootnotesXml(
         textDecoder.decode(fnPart.data),
         styleResolver,
         numberingResolver,
-        resolverFor(buildImageMap(pkg.getRelationships(fnPath))),
+        resolverFor(buildImageMap(fnPath, pkg.getRelationships(fnPath))),
         hyperlinkResolverFor(pkg.getRelationships(fnPath)),
       );
     }
 
     let endnotes: FootnoteNode[] | undefined;
     const enRel = docRels.find((r) => r.type === KNOWN_RELATIONSHIPS.ENDNOTES);
-    const enPath = resolveWordPartPath(enRel?.target, 'word/endnotes.xml');
+    const enPath = resolveWordPartPath(pkg, docPartPath, enRel?.target, 'word/endnotes.xml');
     const enPart = pkg.getPart(enPath);
     if (enPart) {
       endnotes = parseEndnotesXml(
         textDecoder.decode(enPart.data),
         styleResolver,
         numberingResolver,
-        resolverFor(buildImageMap(pkg.getRelationships(enPath))),
+        resolverFor(buildImageMap(enPath, pkg.getRelationships(enPath))),
         hyperlinkResolverFor(pkg.getRelationships(enPath)),
       );
     }
@@ -544,14 +554,14 @@ export class StandardDocumentParser implements DocumentParser {
     // 8. Resolve comments
     let comments: CommentNode[] | undefined;
     const comRel = docRels.find((r) => r.type === KNOWN_RELATIONSHIPS.COMMENTS);
-    const comPath = resolveWordPartPath(comRel?.target, 'word/comments.xml');
+    const comPath = resolveWordPartPath(pkg, docPartPath, comRel?.target, 'word/comments.xml');
     const comPart = pkg.getPart(comPath);
     if (comPart) {
       comments = parseCommentsXml(
         textDecoder.decode(comPart.data),
         styleResolver,
         numberingResolver,
-        resolverFor(buildImageMap(pkg.getRelationships(comPath))),
+        resolverFor(buildImageMap(comPath, pkg.getRelationships(comPath))),
         hyperlinkResolverFor(pkg.getRelationships(comPath)),
       );
     }
@@ -559,9 +569,19 @@ export class StandardDocumentParser implements DocumentParser {
     // 9. Resolve metadata
     const metadata = parsePackageMetadata(pkg);
 
-    // 10. Parse document XML
+    // 10. Document settings: w:evenAndOddHeaders is a document-wide switch
+    // in word/settings.xml (ISO/IEC 29500-1 §17.15.1.35), not a sectPr
+    // child; every section honors it (F-HDREVEN).
+    const settingsRel = docRels.find((r) => r.type === KNOWN_RELATIONSHIPS.SETTINGS);
+    const settingsPath = resolveWordPartPath(pkg, docPartPath, settingsRel?.target, 'word/settings.xml');
+    const settingsPart = pkg.getPart(settingsPath);
+    const evenAndOddHeaders = settingsPart
+      ? parseEvenAndOddHeaders(parseWithMarkupCompatibility(textDecoder.decode(settingsPart.data), (xml) => defaultXmlAdapter.parse(xml)))
+      : false;
+
+    // 11. Parse document XML
     const rootNode = parseWithMarkupCompatibility(textDecoder.decode(docPart.data), (xml) => defaultXmlAdapter.parse(xml));
-    return this.parseDocument(
+    const document = this.parseDocument(
       rootNode,
       styleResolver,
       numberingResolver,
@@ -575,7 +595,28 @@ export class StandardDocumentParser implements DocumentParser {
       customStylesXml,
       customNumberingXml,
     );
+    // Parsed packages carry the switch explicitly: false records "even
+    // parts present but unused" so the layout ignores them like Word
+    // does, while a hand-built AST (flag undefined) that supplies an
+    // even header means to use it (F-HDREVEN).
+    for (const section of document.sections) section.properties.evenAndOddHeaders = evenAndOddHeaders;
+    return document;
   }
+}
+
+/** True when word/settings.xml turns on distinct even-page headers/footers. */
+export function parseEvenAndOddHeaders(settingsRoot: XmlNode): boolean {
+  const root = settingsRoot.nodeName.toLowerCase().endsWith('settings')
+    ? settingsRoot
+    : settingsRoot.children.find((c) => c.nodeName.toLowerCase().endsWith('settings'));
+  if (!root) return false;
+  for (const child of root.children) {
+    const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+    if (tag !== 'evenandoddheaders') continue;
+    const val = (child.attributes['w:val'] ?? child.attributes['val'])?.toLowerCase();
+    return val === undefined || !(val === '0' || val === 'false' || val === 'off');
+  }
+  return false;
 }
 
 export const defaultDocumentParser = new StandardDocumentParser();

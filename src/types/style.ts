@@ -30,10 +30,19 @@ export interface ParagraphNumbering {
   level: number;
   format?: string; // 'decimal' | 'bullet' | 'lowerLetter' | 'upperLetter' | 'lowerRoman' | 'upperRoman'
   prefixText?: string; // e.g. "1.", "•", "a)"
+  prefixFontFamily?: string; // from the numbering level rPr (e.g. a symbol font for bullets)
+  prefixFontSizePt?: number; // from the numbering level rPr sz (half-points)
 }
 
 export interface ParagraphStyle {
   alignment?: TextAlignment;
+  /**
+   * Direct `w:pPr/w:rPr` font size (the paragraph mark) in points.
+   * Reference renderers size an otherwise empty paragraph line from the
+   * mark, not from the document default (F-PMARK). Absent when the
+   * paragraph carries no direct mark formatting.
+   */
+  markFontSizePt?: number;
   lineSpacingPt?: number;
   spaceBeforePt?: number;
   spaceAfterPt?: number;

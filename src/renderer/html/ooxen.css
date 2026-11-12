@@ -21,6 +21,9 @@
   font-size: 11pt;
   line-height: 1.15;
   overflow-wrap: break-word;
+  /* Tab characters advance to the next 36pt (half-inch) stop, Word's
+     default tab grid, instead of the browser's eight-space default. */
+  tab-size: 36pt;
 }
 
 /* Page surface. Geometry (width, padding) stays inline from the renderer. */

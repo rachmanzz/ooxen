@@ -47,9 +47,9 @@ describe('Layout Line Breaker', () => {
     expect(lines[2]?.fragments[0]?.text).toBe('Line');
   });
 
-  it('should collapse a leading tab the way it collapses leading spaces', () => {
-    // Reference renderers drop a tab at line start; keeping it indents the
-    // first line ~one tab stop away from the reference (story fixture).
+  it('keeps a paragraph-initial tab and advances to the first default stop (F-TABLEAD)', () => {
+    // A typed Tab at the start of a paragraph is a real tab in Word: the
+    // text lands on the next 36pt stop, it is not collapsed like a space.
     const paragraph: ParagraphNode = {
       type: 'paragraph',
       children: [{ type: 'run', text: '\tHello world' }],
@@ -57,8 +57,19 @@ describe('Layout Line Breaker', () => {
 
     const lines = lineBreaker.breakParagraph(paragraph, 500);
     expect(lines.length).toBe(1);
-    expect(lines[0]?.fragments[0]?.isTab).not.toBe(true);
-    expect(lines[0]?.fragments[0]?.bounds.x).toBe(0);
+    expect(lines[0]?.fragments[0]?.isTab).toBe(true);
+    const text = lines[0]!.fragments.find((f) => f.text.includes('Hello'))!;
+    expect(lines[0]!.bounds.x + text.bounds.x).toBeCloseTo(36, 5);
+  });
+
+  it('advances two leading tabs to the second default stop (F-TABLEAD)', () => {
+    const paragraph: ParagraphNode = {
+      type: 'paragraph',
+      children: [{ type: 'run', text: '\t\tHello' }],
+    };
+    const lines = lineBreaker.breakParagraph(paragraph, 500);
+    const text = lines[0]!.fragments.find((f) => f.text.includes('Hello'))!;
+    expect(lines[0]!.bounds.x + text.bounds.x).toBeCloseTo(72, 5);
   });
 
   it('should keep tabs in the middle of a line', () => {
@@ -150,5 +161,198 @@ describe('Decimal and bar tab stops (F-TABSPAN)', () => {
     expect(tab.bounds.x + tab.bounds.width).toBeCloseTo(200, 0);
     expect(tab.barTab).toBe(true);
     expect(tabFragmentOf('left', 'after').barTab).not.toBe(true);
+  });
+
+  it('measures the numbering prefix in the paragraph font so a symbol font cannot inflate the line (F-NUMBOX)', () => {
+    // A symbol face reports a giant fontBoundingBox (tallest glyphs, not
+    // the bullet). The line box must follow the paragraph font instead.
+    const familyMetrics = {
+      measureText: (text: string, style?: { fontSizePt?: number; fontFamily?: string }) => {
+        const size = style?.fontSizePt ?? 11;
+        const big = style?.fontFamily === 'Noto Sans Symbols';
+        const ascent = big ? size * 1.6 : size * 0.82;
+        const descent = big ? size * 0.5 : size * 0.22;
+        return { width: text.length * size * 0.5, height: ascent + descent, ascent, descent };
+      },
+    };
+    const breaker = new StandardLineBreaker(familyMetrics as unknown as import('../../src/layout/text-metrics.js').TextMetricsMeasurer);
+    const paragraph: ParagraphNode = {
+      type: 'paragraph',
+      style: {
+        numbering: {
+          numId: 2,
+          level: 0,
+          format: 'bullet',
+          prefixText: '▪',
+          prefixFontFamily: 'Noto Sans Symbols',
+        },
+      },
+      children: [{ type: 'run', text: 'Body', style: { fontFamily: 'Cambria', fontSizePt: 9 } }],
+    };
+    const lines = breaker.breakParagraph(paragraph, 400);
+    // 9pt text line ≈ 9.36; the symbol box alone would give ≈ 18.9.
+    expect(lines[0]!.bounds.height).toBeCloseTo(9.36, 0);
+    // The bullet still renders in the level font.
+    expect(lines[0]!.fragments[0]!.style?.fontFamily).toBe('Noto Sans Symbols');
+  });
+
+  it('sends the numbering tab to the text indent, not to an explicit stop (F-NUMTAB)', () => {
+    const paragraph: ParagraphNode = {
+      type: 'paragraph',
+      style: {
+        indentLeftPt: 36,
+        firstLineIndentPt: -18,
+        tabStops: [{ positionPt: 200, alignment: 'center', leader: 'none' }],
+        numbering: {
+          numId: 2,
+          level: 0,
+          format: 'bullet',
+          prefixText: '▪',
+        },
+      },
+      children: [{ type: 'run', text: 'Body text' }],
+    };
+    const lines = lineBreaker.breakParagraph(paragraph, 400);
+    const line = lines[0]!;
+    const body = line.fragments.find((f) => f.text.includes('Body'))!;
+    // Text starts at the hanging indent end (36pt from margin),
+    // not centered on the explicit 200pt stop.
+    expect(line.bounds.x + body.bounds.x).toBeCloseTo(36, 0);
+  });
+
+  it('renders the numbering prefix in the level font, not the paragraph font (F-NUMFONT)', () => {
+    const paragraph: ParagraphNode = {
+      type: 'paragraph',
+      style: {
+        numbering: {
+          numId: 2,
+          level: 0,
+          format: 'bullet',
+          prefixText: '▪',
+          prefixFontFamily: 'Noto Sans Symbols',
+        },
+      },
+      children: [
+        { type: 'run', text: 'Header text', style: { fontFamily: 'Cambria', fontSizePt: 9 } },
+      ],
+    };
+    const lines = lineBreaker.breakParagraph(paragraph, 400);
+    const first = lines[0]!.fragments[0]!;
+    expect(first.text).toContain('▪');
+    expect(first.style?.fontFamily).toBe('Noto Sans Symbols');
+    // Body text keeps the paragraph font.
+    expect(lines[0]!.fragments.some((f) => f.text.includes('Header') && f.style?.fontFamily === 'Cambria')).toBe(true);
+  });
+
+  it('sizes an empty paragraph from the paragraph-mark font, not the default (F-PMARK)', () => {
+    const paragraph: ParagraphNode = {
+      type: 'paragraph',
+      style: { markFontSizePt: 16 },
+      children: [],
+    };
+    const lines = lineBreaker.breakParagraph(paragraph, 400);
+    expect(lines.length).toBe(1);
+    // 16pt pilcrow: 16 * 1.2, the same factor as the 11pt default (13.2).
+    expect(lines[0]!.bounds.height).toBeCloseTo(19.2, 5);
+  });
+
+  it('sizes an anchor-only paragraph from the paragraph-mark font (F-PMARK)', () => {
+    const paragraph: ParagraphNode = {
+      type: 'paragraph',
+      style: { markFontSizePt: 16 },
+      children: [
+        { type: 'run', text: '' },
+        {
+          type: 'run',
+          text: '',
+          drawing: {
+            type: 'drawing',
+            name: 'Rule',
+            widthPt: 450,
+            heightPt: 1,
+            commands: [],
+            anchor: { horizontalFrom: 'column', horizontalOffsetPt: 7, verticalFrom: 'paragraph', verticalOffsetPt: 23 },
+          },
+        },
+      ],
+    };
+    const lines = lineBreaker.breakParagraph(paragraph, 400);
+    expect(lines.length).toBe(1);
+    expect(lines[0]!.bounds.height).toBeGreaterThan(15);
+  });
+
+  it('finds the numbering tab after a multi-word prefix (F-NUMTAB)', () => {
+    const paragraph: ParagraphNode = {
+      type: 'paragraph',
+      style: {
+        indentLeftPt: 72,
+        firstLineIndentPt: -54,
+        tabStops: [{ positionPt: 200, alignment: 'center', leader: 'none' }],
+        numbering: {
+          numId: 3,
+          level: 0,
+          format: 'decimal',
+          prefixText: 'Article 1',
+        },
+      },
+      children: [{ type: 'run', text: 'Body text' }],
+    };
+    const lines = lineBreaker.breakParagraph(paragraph, 400);
+    const line = lines[0]!;
+    const body = line.fragments.find((f) => f.text.includes('Body'))!;
+    // The tab after "Article 1" still advances to the text indent (72pt),
+    // not to the explicit 200pt stop.
+    expect(line.bounds.x + body.bounds.x).toBeCloseTo(72, 0);
+  });
+
+  it('advances a number wider than its hanging indent to the next tab stop (F-NUMTAB)', () => {
+    const paragraph: ParagraphNode = {
+      type: 'paragraph',
+      style: {
+        indentLeftPt: 18,
+        firstLineIndentPt: -18,
+        numbering: { numId: 4, level: 0, format: 'upperRoman', prefixText: 'XXVIII.' },
+      },
+      children: [{ type: 'run', text: 'Body text', style: { fontSizePt: 12 } }],
+    };
+    const lines = lineBreaker.breakParagraph(paragraph, 400);
+    const line = lines[0]!;
+    const prefix = line.fragments[0]!;
+    const body = line.fragments.find((f) => f.text.includes('Body'))!;
+    const numberEnd = line.bounds.x + prefix.bounds.x + prefix.bounds.width;
+    expect(numberEnd).toBeGreaterThan(18);
+    const bodyX = line.bounds.x + body.bounds.x;
+    // Past the indent end, the tab lands on the next default 36pt stop
+    // rather than a fixed 8pt gap after the number.
+    expect(bodyX).toBeGreaterThanOrEqual(numberEnd + 2);
+    expect(bodyX % 36).toBeCloseTo(0, 5);
+  });
+
+  it('keeps the numbering prefix width from the level font while clamping its box (F-NUMBOX)', async () => {
+    const { StandardLineBreaker } = await import('../../src/layout/line-breaker.js');
+    // Fake metrics: the 'Wide' face is five times wider than anything else.
+    const metrics = {
+      measureText: (text: string, style?: { fontFamily?: string; fontSizePt?: number }) => {
+        const size = style?.fontSizePt ?? 11;
+        const perChar = style?.fontFamily === 'Wide' ? size * 2.5 : size * 0.5;
+        return { width: text.length * perChar, height: size * 1.2, ascent: size, descent: size * 0.2 };
+      },
+    };
+    const breaker = new StandardLineBreaker(metrics);
+    const paragraph: ParagraphNode = {
+      type: 'paragraph',
+      style: {
+        indentLeftPt: 18,
+        firstLineIndentPt: -18,
+        numbering: { numId: 5, level: 0, format: 'decimal', prefixText: '12.', prefixFontFamily: 'Wide' },
+      },
+      children: [{ type: 'run', text: 'Body', style: { fontSizePt: 10 } }],
+    };
+    const line = breaker.breakParagraph(paragraph, 400)[0]!;
+    const prefix = line.fragments[0]!;
+    // 3 chars at 25pt each in the level font, not 5pt each in the paragraph font.
+    expect(prefix.bounds.width).toBeCloseTo(75, 5);
+    const body = line.fragments.find((f) => f.text.includes('Body'))!;
+    expect(line.bounds.x + body.bounds.x).toBeGreaterThanOrEqual(line.bounds.x + prefix.bounds.x + 75);
   });
 });

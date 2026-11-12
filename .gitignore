@@ -4,6 +4,7 @@ dist
 node_modules
 screenshot/
 example/
+.agents/
 gemini.md
 GEMINI.md
 agents.md

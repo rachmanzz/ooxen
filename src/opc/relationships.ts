@@ -25,6 +25,7 @@ export const KNOWN_RELATIONSHIPS = {
   DOCUMENT: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument',
   STYLES: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles',
   NUMBERING: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering',
+  SETTINGS: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings',
   IMAGE: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image',
   HEADER: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/header',
   FOOTER: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer',

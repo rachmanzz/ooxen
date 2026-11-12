@@ -1,4 +1,5 @@
 import type { DrawingShapeNode, ImageNode } from '../../types/ast.js';
+import type { WmfPreview } from '../../parser/dml/wmf-preview.js';
 import type { Rect } from '../../types/common.js';
 import type { TabLeader, TextStyle } from '../../types/style.js';
 import type { BorderStyle, CellBox } from '../../layout/page-engine.js';
@@ -15,6 +16,20 @@ export interface DrawPrimitives {
   drawRect(target: CanvasTarget, rect: Rect, fillColor?: string, strokeColor?: string, strokeWidth?: number): void;
   drawShape(target: CanvasTarget, shape: DrawingShapeNode, x: number, y: number): void;
   drawImage(target: CanvasTarget, image: ImageNode, x: number, y: number): void;
+  /**
+   * Draws a parsed WMF equation preview (F-WMFEQ) as vector text and
+   * rules. Used instead of `drawImage` for metafiles, which browsers
+   * cannot decode to bitmaps. Optional so existing custom primitives
+   * keep working; the renderer falls back to `drawImage` without it.
+   */
+  drawWmfPreview?(
+    target: CanvasTarget,
+    preview: WmfPreview,
+    x: number,
+    y: number,
+    widthPt: number,
+    heightPt: number,
+  ): void;
   drawLeader(target: CanvasTarget, leader: TabLeader, x: number, y: number, width: number, baseline: number, style?: TextStyle): void;
   drawCellBox(target: CanvasTarget, cell: CellBox): void;
   drawBorderLine(target: CanvasTarget, x1: number, y1: number, x2: number, y2: number, border: BorderStyle): void;
@@ -151,6 +166,52 @@ export class StandardDrawPrimitives implements DrawPrimitives {
     }
 
     target.restore();
+  }
+
+  drawWmfPreview(
+    target: CanvasTarget,
+    preview: WmfPreview,
+    x: number,
+    y: number,
+    widthPt: number,
+    heightPt: number,
+  ): void {
+    if (preview.widthPt <= 0 || preview.heightPt <= 0) return;
+    const sx = widthPt / preview.widthPt;
+    const sy = heightPt / preview.heightPt;
+    target.save();
+    try {
+      for (const line of preview.lines) {
+        const width = Math.max(0.75, line.widthPt * sy);
+        if (target.beginPath) {
+          target.beginPath();
+          target.strokeStyle = line.color;
+          target.lineWidth = width;
+          target.moveTo?.(x + line.x1 * sx, y + line.y1 * sy);
+          target.lineTo?.(x + line.x2 * sx, y + line.y2 * sy);
+          target.stroke?.();
+        } else {
+          target.fillStyle = line.color;
+          target.fillRect(
+            x + Math.min(line.x1, line.x2) * sx,
+            y + Math.min(line.y1, line.y2) * sy - width / 2,
+            Math.abs(line.x2 - line.x1) * sx || width,
+            Math.abs(line.y2 - line.y1) * sy || width,
+          );
+        }
+      }
+      for (const run of preview.texts) {
+        // Same px-for-pt convention as drawText: the page transform maps
+        // one canvas px to one layout point. Preview runs are addressed
+        // by baseline, matching the SVG emitter.
+        const size = run.sizePt * ((sx + sy) / 2);
+        target.font = `${run.italic ? 'italic ' : ''}${size}px ${run.face}`;
+        target.fillStyle = run.color;
+        target.fillText(run.text, x + run.x * sx, y + run.y * sy);
+      }
+    } finally {
+      target.restore();
+    }
   }
 
   drawImage(target: CanvasTarget, image: ImageNode, x: number, y: number): void {
