@@ -1,4 +1,4 @@
-import { defaultXmlAdapter, type XmlAdapter } from '../parser/xml-adapter.js';
+import { defaultXmlAdapter, escapeXml, type XmlAdapter } from '../parser/xml-adapter.js';
 
 /**
  * ISO/IEC 29500-2: [Content_Types].xml handling.
@@ -73,21 +73,18 @@ export function serializeContentTypes(manifest: ContentTypesManifest): string {
   // extension, part name, or content type produces malformed XML and a
   // corrupt package (v1 F19).
   for (const d of manifest.defaults) {
-    lines.push(`  <Default Extension="${escapeXmlAttribute(d.extension)}" ContentType="${escapeXmlAttribute(d.contentType)}"/>`);
+    lines.push(`  <Default Extension="${escapeXml(d.extension)}" ContentType="${escapeXml(d.contentType)}"/>`);
   }
 
   for (const o of manifest.overrides) {
     const part = o.partName.startsWith('/') ? o.partName : '/' + o.partName;
-    lines.push(`  <Override PartName="${escapeXmlAttribute(part)}" ContentType="${escapeXmlAttribute(o.contentType)}"/>`);
+    lines.push(`  <Override PartName="${escapeXml(part)}" ContentType="${escapeXml(o.contentType)}"/>`);
   }
 
   lines.push('</Types>');
   return lines.join('\n');
 }
 
-function escapeXmlAttribute(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
 
 export function createDefaultContentTypesManifest(): ContentTypesManifest {
   return {

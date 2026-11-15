@@ -9,7 +9,16 @@ import type {
   TableNode,
 } from '../types/ast.js';
 import type { Margins, Rect, Size } from '../types/common.js';
-import { defaultLineBreaker, type LayoutLine, type LineBreaker, type LineFragment } from './line-breaker.js';
+import type { ParagraphStyle } from '../types/style.js';
+import { hostDocumentBlockFloats } from '../types/block-floats.js';
+import {
+  defaultLineBreaker,
+  layoutTextboxLines,
+  type LayoutLine,
+  type LineBreakOptions,
+  type LineBreaker,
+  type LineFragment,
+} from './line-breaker.js';
 
 /**
  * Geometric layout and pagination model according to ISO/IEC 29500-1.
@@ -22,15 +31,123 @@ export interface BorderStyle {
 }
 
 /**
+ * Box an anchor keyword resolves against, in the coordinate space of the
+ * lines being laid out. Height is omitted when it is not known yet (a
+ * table cell still being filled): vertical keywords then pin to the top.
+ */
+export interface AnchorReferenceBox {
+  x: number;
+  y: number;
+  width: number;
+  height?: number;
+}
+
+/**
  * Reference geometry for resolving floating-image anchors (F-ANCHOR).
- * Page size is constant per section; the index and column width are read
- * live because pages and columns turn over mid-paragraph.
+ * The page and margin boxes are explicit so a host other than the page
+ * (a table cell) can offer its own content box for both axes; the page
+ * index and column width are read live because pages and columns turn
+ * over mid-paragraph.
+ *
+ * Part of the public type surface (re-exported from the package entry),
+ * but no public method takes or returns it; its shape follows the
+ * anchor model and changes are recorded in CHANGELOG as breaking.
  */
 export interface FloatingAnchorContext {
-  pageWidthPt: number;
-  pageHeightPt: number;
+  /** What `relativeFrom="page"` means here. */
+  pageBox: AnchorReferenceBox;
+  /** What `relativeFrom="margin"` means here; its origin is also the paragraph origin. */
+  marginBox: AnchorReferenceBox;
   getPageIndex: () => number;
   getColumnWidthPt: () => number;
+  /** Left edge of the active column, for `relativeFrom="column"`. */
+  getColumnStartXPt: () => number;
+  /**
+   * For a table cell: runs `resolve` with the host page expressed in this
+   * cell's coordinates once the cell has its final page position (after
+   * row overflow and vertical cell alignment). Floats with
+   * `layoutInCell="0"` use it, since their page/margin references mean
+   * the real page rather than the cell.
+   */
+  resolveOutsideCell?: (resolve: (hostCtx: FloatingAnchorContext) => void) => void;
+}
+
+/** Anchor context for lines laid out on a real page. */
+function pageAnchorContext(
+  pageSize: Size,
+  margins: Margins,
+  getPageIndex: () => number,
+  getColumnWidthPt: () => number,
+  getColumnStartXPt: () => number = () => margins.left,
+): FloatingAnchorContext {
+  return {
+    pageBox: { x: 0, y: 0, width: pageSize.width, height: pageSize.height },
+    marginBox: {
+      x: margins.left,
+      y: margins.top,
+      width: Math.max(0, pageSize.width - margins.left - margins.right),
+      height: Math.max(0, pageSize.height - margins.top - margins.bottom),
+    },
+    getPageIndex,
+    getColumnWidthPt,
+    getColumnStartXPt,
+  };
+}
+
+/** The same context seen from a coordinate space whose origin sits at (-dx, -dy). */
+function shiftAnchorContext(ctx: FloatingAnchorContext, dx: number, dy: number): FloatingAnchorContext {
+  return {
+    pageBox: { ...ctx.pageBox, x: ctx.pageBox.x + dx, y: ctx.pageBox.y + dy },
+    marginBox: { ...ctx.marginBox, x: ctx.marginBox.x + dx, y: ctx.marginBox.y + dy },
+    getPageIndex: ctx.getPageIndex,
+    getColumnWidthPt: ctx.getColumnWidthPt,
+    getColumnStartXPt: () => ctx.getColumnStartXPt() + dx,
+  };
+}
+
+/**
+ * Vertical advance of one line under the paragraph's `w:spacing` rule
+ * (§17.3.1.33): `auto` scales the line's own height by the multiple,
+ * `atLeast` is a floor, `exact` replaces it, `atMost` caps it. A point
+ * value without a rule (hand-built ASTs, older serializations) is a floor.
+ */
+function lineAdvance(style: ParagraphStyle | undefined, naturalHeight: number): number {
+  const pt = style?.lineSpacingPt;
+  const rule = style?.lineSpacingRule ?? (pt !== undefined ? 'atLeast' : 'auto');
+  switch (rule) {
+    case 'exact':
+      return pt ?? naturalHeight;
+    case 'atLeast':
+      return Math.max(naturalHeight, pt ?? 0);
+    case 'atMost':
+      return pt === undefined ? naturalHeight : Math.min(naturalHeight, pt);
+    default:
+      return naturalHeight * (style?.lineSpacingMultiple ?? 1);
+  }
+}
+
+/**
+ * Space before and after a paragraph. With `w:contextualSpacing` the
+ * space facing a neighbour of the same paragraph style is dropped
+ * (§17.3.1.9), which is how list items authored in List Paragraph sit
+ * flush against each other.
+ */
+function paragraphSpacing(
+  p: ParagraphNode,
+  prev: BlockNode | undefined,
+  next: BlockNode | undefined,
+): { before: number; after: number } {
+  const contextual = p.style?.contextualSpacing === true;
+  const sameStyle = (other: BlockNode | undefined): boolean =>
+    other?.type === 'paragraph' && (other.styleId ?? '') === (p.styleId ?? '');
+  return {
+    before: contextual && sameStyle(prev) ? 0 : (p.style?.spaceBeforePt ?? 0),
+    after: contextual && sameStyle(next) ? 0 : (p.style?.spaceAfterPt ?? 0),
+  };
+}
+
+function lineHasFloat(line: LayoutLine): boolean {
+  return line.fragments.some((f) => (f.image?.anchor ?? f.drawing?.anchor) !== undefined);
 }
 
 export interface CellBox {
@@ -138,12 +255,18 @@ const FOOTNOTE_SEPARATOR_GAP_PT = 8;
 export class StandardPageEngine implements PageEngine {
   private lineBreaker: LineBreaker;
   private footnoteHeightCache = new Map<string, number>();
+  /** Document settings for the active layoutDocument call (tab grid). */
+  private breakOptions: LineBreakOptions | undefined;
 
   constructor(lineBreaker: LineBreaker = defaultLineBreaker) {
     this.lineBreaker = lineBreaker;
   }
 
-  layoutDocument(document: DocumentNode): PageLayout[] {
+  layoutDocument(input: DocumentNode): PageLayout[] {
+    // Block-level floats become their empty host paragraph once, here, so
+    // every block loop below sees only paragraphs and tables (F-HTMLFLOAT).
+    const document = hostDocumentBlockFloats(input);
+    this.breakOptions = document.settings?.defaultTabStopPt !== undefined ? { defaultTabStopPt: document.settings.defaultTabStopPt } : undefined;
     // Footnote heights depend on document content; never reuse across documents.
     this.footnoteHeightCache.clear();
     const pages: PageLayout[] = [];
@@ -327,12 +450,8 @@ export class StandardPageEngine implements PageEngine {
       // started in for header/footer resolution (F-HDRSEC): the resumed
       // page still carries the previous section's content, so the first
       // section on the page wins its header/footer. One-shot — later
-      // pages in this section use the current section. Clearing here is
-      // safe: the init above already consumed the resume state.
+      // pages in this section use the current section.
       let pendingResumeSection = resumedMeta?.section;
-      resumedPage = undefined;
-      resumedMeta = undefined;
-      resumedUsedHeight = 0;
 
       const emitPage = (): void => {
         const fmtPageNum = formatPageNumber(currentLogicalPageNumber, currentNumberingFormat);
@@ -388,6 +507,8 @@ export class StandardPageEngine implements PageEngine {
           return getActiveColStartX();
         },
       };
+
+      const bodyAnchorCtx = pageAnchorContext(pageSize, margins, () => currentPageIndex, getActiveColWidth, getActiveColStartX);
 
       for (let bIndex = 0; bIndex < section.children.length; bIndex++) {
         const block = section.children[bIndex]!;
@@ -449,7 +570,7 @@ export class StandardPageEngine implements PageEngine {
           }
 
           if (block.style?.keepNext && bIndex + 1 < section.children.length && (currentY > 0 || currentLines.length > 0)) {
-            const curLines = this.lineBreaker.breakParagraph(block, getActiveColWidth());
+            const curLines = this.lineBreaker.breakParagraph(block, getActiveColWidth(), this.breakOptions);
             const curHeight = curLines.reduce((acc, l) => acc + l.bounds.height, 0) + (block.style?.spaceBeforePt ?? 0);
             const nextEstimatedFirstLineHeight = 16;
             if (currentY + curHeight + nextEstimatedFirstLineHeight > contentHeight) {
@@ -473,6 +594,7 @@ export class StandardPageEngine implements PageEngine {
             (newY) => {
               currentY = newY;
             },
+            bodyAnchorCtx,
             () => {
               scanPlacedFootnoteRefs();
               emitPage();
@@ -481,12 +603,7 @@ export class StandardPageEngine implements PageEngine {
             () => {
               blockOverflow();
             },
-            {
-              pageWidthPt: pageSize.width,
-              pageHeightPt: pageSize.height,
-              getPageIndex: () => currentPageIndex,
-              getColumnWidthPt: () => getActiveColWidth(),
-            },
+            { prev: section.children[bIndex - 1], next: section.children[bIndex + 1] },
           );
         } else if (block.type === 'table') {
           this.layoutTable(
@@ -507,6 +624,8 @@ export class StandardPageEngine implements PageEngine {
             (cellBox) => {
               currentCellBoxes.push(cellBox);
             },
+            0,
+            () => bodyAnchorCtx,
           );
         } else if (block.type === 'drawing') {
           if (currentY + block.heightPt > contentHeight && (currentLines.length > 0 || currentColumnIndex > 0)) {
@@ -517,7 +636,6 @@ export class StandardPageEngine implements PageEngine {
             drawing: block,
             bounds: { x: 0, y: 0, width: block.widthPt, height: block.heightPt },
           };
-          this.layoutShapeText(blockDrawingFragment, block.widthPt);
           currentLines.push({
             bounds: {
               x: getActiveColStartX(),
@@ -740,7 +858,7 @@ export class StandardPageEngine implements PageEngine {
     for (const fn of footnotes) {
       for (const block of fn.children) {
         if (block.type === 'paragraph') {
-          const pLines = this.lineBreaker.breakParagraph(block, contentWidth);
+          const pLines = this.lineBreaker.breakParagraph(block, contentWidth, this.breakOptions);
           for (const l of pLines) rawLines.push(l);
         }
       }
@@ -761,11 +879,21 @@ export class StandardPageEngine implements PageEngine {
   ): LayoutLine[] {
     const lines: LayoutLine[] = [];
     let currentY = 0;
+    const anchorCtx = pageAnchorContext(
+      { width: pageWidthPt, height: pageHeightPt },
+      margins,
+      () => pageIndex,
+      () => contentWidth,
+    );
 
-    for (const block of node.children) {
+    for (let i = 0; i < node.children.length; i++) {
+      const block = node.children[i]!;
       if (block.type === 'paragraph') {
         const resolvedParagraph = this.resolveFields(block, pageNumStr, totalPages);
-        const pLines = this.lineBreaker.breakParagraph(resolvedParagraph, contentWidth);
+        const pLines = this.lineBreaker.breakParagraph(resolvedParagraph, contentWidth, this.breakOptions);
+        // Paragraph spacing and line rule apply here as in the body.
+        const { before, after } = paragraphSpacing(block, node.children[i - 1], node.children[i + 1]);
+        if (currentY > 0) currentY += before;
         // Content-relative top of this paragraph: floating fragments in
         // headers/footers resolve against it exactly like body floats
         // (F-HDRFLOAT), otherwise anchored shapes pile up inline.
@@ -781,15 +909,11 @@ export class StandardPageEngine implements PageEngine {
             baseline: line.baseline,
             fragments: line.fragments,
           };
-          this.resolveFloatingFragments(pageLine, margins, paragraphTop, {
-            pageWidthPt,
-            pageHeightPt,
-            getPageIndex: () => pageIndex,
-            getColumnWidthPt: () => contentWidth,
-          });
+          this.resolveFloatingFragments(pageLine, paragraphTop, anchorCtx);
           lines.push(pageLine);
-          currentY += line.bounds.height;
+          currentY += lineAdvance(block.style, line.bounds.height);
         }
+        currentY += after;
       }
     }
 
@@ -825,103 +949,133 @@ export class StandardPageEngine implements PageEngine {
    * Fragment bounds stay relative to the line (the renderer adds the
    * line origin), so the absolute page-space target is converted back.
    */
-  private resolveFloatingFragments(
-    pageLine: LayoutLine,
-    margins: Margins,
-    paragraphTop: number,
-    anchorCtx?: FloatingAnchorContext,
-  ): void {
+  private resolveFloatingFragments(pageLine: LayoutLine, paragraphTop: number, anchorCtx: FloatingAnchorContext): void {
     for (const frag of pageLine.fragments) {
       const anchor = frag.image?.anchor ?? frag.drawing?.anchor;
       if (!anchor) continue;
-      const imgW = frag.image?.widthPt ?? frag.drawing?.widthPt ?? 0;
-      const imgH = frag.image?.heightPt ?? frag.drawing?.heightPt ?? 0;
-      const fromH = anchor.horizontalFrom.toLowerCase();
-      const fromV = anchor.verticalFrom.toLowerCase();
-      const columnW = anchorCtx?.getColumnWidthPt() ?? 0;
-
-      // Horizontal reference edge and width.
-      let baseX: number;
-      let refW: number;
-      if (fromH === 'page') {
-        baseX = 0;
-        refW = anchorCtx?.pageWidthPt ?? 0;
-      } else if (fromH === 'margin') {
-        baseX = 0;
-        refW = Math.max(0, (anchorCtx?.pageWidthPt ?? 0) - margins.left - margins.right);
-      } else if (fromH === 'character') {
-        baseX = pageLine.bounds.x + frag.bounds.x;
-        refW = columnW;
-      } else {
-        // 'column' (default) and 'paragraph': full column width.
-        baseX = margins.left;
-        refW = columnW;
+      // The paragraph top in the line's own coordinate space; it belongs
+      // to the line's host whichever context resolves the float.
+      const paragraphY = anchorCtx.marginBox.y + paragraphTop;
+      // An ordinary cell float resolves against the cell. With
+      // layoutInCell="0" the object is laid out as if outside the cell:
+      // page, margin, column, and page index all come from the host, whose
+      // place relative to the cell is only known once the row is placed
+      // (it may move to the next page, and vertical cell alignment shifts
+      // the content). That resolution is deferred to the host; the in-cell
+      // placement stands in until it runs, without laying out the shape
+      // text twice (F-TBXFLOAT).
+      const deferred = anchor.layoutInCell === false && anchorCtx.resolveOutsideCell !== undefined;
+      this.placeFloatingFragment(frag, pageLine, paragraphY, anchorCtx, !deferred);
+      if (deferred) {
+        anchorCtx.resolveOutsideCell!((hostCtx) => this.placeFloatingFragment(frag, pageLine, paragraphY, hostCtx, true));
       }
-
-      // Physical page 1, 3, 5... (0-based even index) are recto: inside
-      // binds to the left edge there, outside to the right edge.
-      const pageIndex = anchorCtx?.getPageIndex() ?? 0;
-      const isRecto = pageIndex % 2 === 0;
-      const alignH = anchor.horizontalAlign?.toLowerCase();
-      const rightEdge =
-        alignH === 'right' || (alignH === 'outside' && isRecto) || (alignH === 'inside' && !isRecto);
-      let absX: number;
-      if (alignH === 'center') {
-        absX = baseX + (refW - imgW) / 2;
-      } else if (rightEdge) {
-        absX = baseX + refW - imgW;
-      } else if (alignH) {
-        absX = baseX; // left, inside on recto, or unknown keyword: reference edge
-      } else {
-        absX = baseX + anchor.horizontalOffsetPt;
-      }
-
-      // Vertical reference edge and height. Paragraph-relative alignment
-      // has no measurable reference height at resolve time (the paragraph
-      // is still being laid out), so vertical aligns there pin to the
-      // paragraph top — a documented approximation.
-      let baseY: number;
-      let refH: number | undefined;
-      if (fromV === 'page') {
-        baseY = 0;
-        refH = anchorCtx?.pageHeightPt ?? 0;
-      } else if (fromV === 'margin') {
-        baseY = margins.top;
-        refH = (anchorCtx?.pageHeightPt ?? 0) - margins.top - margins.bottom;
-      } else if (fromV === 'line') {
-        baseY = pageLine.bounds.y;
-        refH = pageLine.bounds.height;
-      } else {
-        baseY = margins.top + paragraphTop; // paragraph (default)
-        refH = undefined;
-      }
-
-      const alignV = anchor.verticalAlign?.toLowerCase();
-      let absY: number;
-      if (alignV === 'center' && refH !== undefined) {
-        absY = baseY + (refH - imgH) / 2;
-      } else if ((alignV === 'bottom' || alignV === 'outside') && refH !== undefined) {
-        absY = baseY + refH - imgH;
-      } else if (alignV) {
-        absY = baseY;
-      } else {
-        absY = baseY + anchor.verticalOffsetPt;
-      }
-
-      frag.bounds.x = absX - pageLine.bounds.x;
-      frag.bounds.y = absY - pageLine.bounds.y;
-      frag.bounds.width = imgW;
-      frag.bounds.height = imgH;
-
-      this.layoutShapeText(frag, imgW);
     }
+  }
+
+  /**
+   * Places one floating fragment against `ctx`, expressed in the line's
+   * coordinate space. `paragraphY` is the top of the line's paragraph in
+   * that same space. `layoutText` is false for a stand-in placement that
+   * a deferred one will replace.
+   */
+  private placeFloatingFragment(
+    frag: LineFragment,
+    pageLine: LayoutLine,
+    paragraphY: number,
+    ctx: FloatingAnchorContext,
+    layoutText: boolean,
+  ): void {
+    const anchor = frag.image?.anchor ?? frag.drawing?.anchor;
+    if (!anchor) return;
+    const imgW = frag.image?.widthPt ?? frag.drawing?.widthPt ?? 0;
+    const imgH = frag.image?.heightPt ?? frag.drawing?.heightPt ?? 0;
+    const fromH = anchor.horizontalFrom.toLowerCase();
+    const fromV = anchor.verticalFrom.toLowerCase();
+    const columnW = ctx.getColumnWidthPt();
+
+    // Horizontal reference edge and width.
+    let baseX: number;
+    let refW: number;
+    if (fromH === 'page') {
+      baseX = ctx.pageBox.x;
+      refW = ctx.pageBox.width;
+    } else if (fromH === 'margin') {
+      baseX = ctx.marginBox.x;
+      refW = ctx.marginBox.width;
+    } else if (fromH === 'character') {
+      baseX = pageLine.bounds.x + frag.bounds.x;
+      refW = columnW;
+    } else {
+      // 'column' (default) and 'paragraph': full column width.
+      baseX = ctx.getColumnStartXPt();
+      refW = columnW;
+    }
+
+    // Physical page 1, 3, 5... (0-based even index) are recto: inside
+    // binds to the left edge there, outside to the right edge.
+    const pageIndex = ctx.getPageIndex();
+    const isRecto = pageIndex % 2 === 0;
+    const alignH = anchor.horizontalAlign?.toLowerCase();
+    const rightEdge =
+      alignH === 'right' || (alignH === 'outside' && isRecto) || (alignH === 'inside' && !isRecto);
+    let absX: number;
+    if (alignH === 'center') {
+      absX = baseX + (refW - imgW) / 2;
+    } else if (rightEdge) {
+      absX = baseX + refW - imgW;
+    } else if (alignH) {
+      absX = baseX; // left, inside on recto, or unknown keyword: reference edge
+    } else {
+      absX = baseX + anchor.horizontalOffsetPt;
+    }
+
+    // Vertical reference edge and height. Paragraph-relative alignment
+    // has no measurable reference height at resolve time (the paragraph
+    // is still being laid out), so vertical aligns there pin to the
+    // paragraph top — a documented approximation. A reference box
+    // without a height (a cell still being filled) pins the same way.
+    let baseY: number;
+    let refH: number | undefined;
+    if (fromV === 'page') {
+      baseY = ctx.pageBox.y;
+      refH = ctx.pageBox.height;
+    } else if (fromV === 'margin') {
+      baseY = ctx.marginBox.y;
+      refH = ctx.marginBox.height;
+    } else if (fromV === 'line') {
+      baseY = pageLine.bounds.y;
+      refH = pageLine.bounds.height;
+    } else {
+      baseY = paragraphY; // paragraph (default)
+      refH = undefined;
+    }
+
+    const alignV = anchor.verticalAlign?.toLowerCase();
+    let absY: number;
+    if (alignV === 'center' && refH !== undefined) {
+      absY = baseY + (refH - imgH) / 2;
+    } else if ((alignV === 'bottom' || alignV === 'outside') && refH !== undefined) {
+      absY = baseY + refH - imgH;
+    } else if (alignV) {
+      absY = baseY;
+    } else {
+      absY = baseY + anchor.verticalOffsetPt;
+    }
+
+    frag.bounds.x = absX - pageLine.bounds.x;
+    frag.bounds.y = absY - pageLine.bounds.y;
+    frag.bounds.width = imgW;
+    frag.bounds.height = imgH;
+
+    if (layoutText) this.layoutShapeText(frag, imgW);
   }
 
   /**
    * Lays floating shape textbox content inside the shape frame (DrawingML
    * bodyPr default insets) instead of joining the flow, so banners keep
    * their authored text without pushing later paragraphs down
-   * (F-TBXFLOAT). Called for body, header/footer, and table-cell lines.
+   * (F-TBXFLOAT). Runs from float resolution, so it covers body,
+   * header/footer, and table-cell lines alike.
    */
   private layoutShapeText(frag: LineFragment, shapeWidthPt: number): void {
     const drawing = frag.drawing;
@@ -929,23 +1083,7 @@ export class StandardPageEngine implements PageEngine {
     // drained it into the flow on parse, and the HTML renderer applies
     // the same gate, so neither renderer paints it twice (F-TBXFLOAT).
     if (!drawing?.anchor || !drawing.textbox || drawing.textbox.length === 0) return;
-    const insetX = 91440 / 12700;
-    const insetY = 45720 / 12700;
-    const innerWidth = Math.max(10, shapeWidthPt - insetX * 2);
-    const shapeLines: LayoutLine[] = [];
-    let textY = 0;
-    for (const textPara of drawing.textbox) {
-      // Lines carry paragraph-relative y; shift by the running height of
-      // the paragraphs above, accumulated once per paragraph.
-      let paraHeight = 0;
-      for (const textLine of this.lineBreaker.breakParagraph(textPara, innerWidth)) {
-        textLine.bounds.y += textY;
-        paraHeight += textLine.bounds.height;
-        shapeLines.push(textLine);
-      }
-      textY += paraHeight;
-    }
-    frag.shapeText = { lines: shapeLines, x: insetX, y: insetY };
+    frag.shapeText = layoutTextboxLines(this.lineBreaker, drawing.textbox, shapeWidthPt);
   }
 
   private layoutParagraph(
@@ -957,12 +1095,12 @@ export class StandardPageEngine implements PageEngine {
     onPageOverflow: () => void,
     getY: () => number,
     setY: (y: number) => void,
+    anchorCtx: FloatingAnchorContext,
     onPageBreak?: () => void,
     onColumnBreak?: () => void,
-    anchorCtx?: FloatingAnchorContext,
+    neighbours?: { prev?: BlockNode; next?: BlockNode },
   ): void {
-    const spaceBefore = p.style?.spaceBeforePt ?? 0;
-    const spaceAfter = p.style?.spaceAfterPt ?? 0;
+    const { before: spaceBefore, after: spaceAfter } = paragraphSpacing(p, neighbours?.prev, neighbours?.next);
 
     let y = getY();
     if (y > 0 && spaceBefore > 0) {
@@ -974,13 +1112,9 @@ export class StandardPageEngine implements PageEngine {
       }
     }
 
-    const lines = this.lineBreaker.breakParagraph(p, contentWidth);
+    const lines = this.lineBreaker.breakParagraph(p, contentWidth, this.breakOptions);
 
-    // The authored line spacing acts as the minimum vertical advance per
-    // line (atLeast semantics — the serializer emits the same rule, v2 N9).
-    // Without this, exact-spaced documents pack ~2x too many lines per page.
-    const minAdvance = p.style?.lineSpacingPt ?? 0;
-    const advanceOf = (height: number): number => Math.max(height, minAdvance);
+    const advanceOf = (height: number): number => lineAdvance(p.style, height);
 
     // Page-space top of this paragraph's first line on the current page.
     // Floating images anchored relative to the paragraph resolve against it.
@@ -1021,7 +1155,7 @@ export class StandardPageEngine implements PageEngine {
         breakType: line.breakType,
       };
 
-      this.resolveFloatingFragments(pageLine, margins, paragraphTop, anchorCtx);
+      this.resolveFloatingFragments(pageLine, paragraphTop, anchorCtx);
       pushLine(pageLine);
       y += advance;
 
@@ -1063,6 +1197,7 @@ export class StandardPageEngine implements PageEngine {
     setY: (y: number) => void,
     pushCellBox?: (cell: CellBox) => void,
     depth = 0,
+    getAnchorCtx?: () => FloatingAnchorContext,
   ): void {
     let y = getY();
     const rowCount = table.rows.length;
@@ -1175,6 +1310,9 @@ export class StandardPageEngine implements PageEngine {
       const cellLinesMap: LayoutLine[][] = [];
       const cellContentHeights: number[] = [];
       const cellPaddings: { top: number; bottom: number; left: number; right: number }[] = [];
+      // Per cell: layoutInCell="0" floats waiting for the cell's final
+      // page position (F-TBXFLOAT).
+      const cellOutsideResolvers: ((hostCtx: FloatingAnchorContext) => void)[][] = [];
 
       for (let c = 0; c < cellCount; c++) {
         const cell = row.children[c]!;
@@ -1190,16 +1328,48 @@ export class StandardPageEngine implements PageEngine {
         if (cell.vMerge === 'continue' || cell.rowSpan === 0) {
           cellLinesMap.push([]);
           cellContentHeights.push(0);
+          cellOutsideResolvers.push([]);
           continue;
         }
 
         const innerWidth = Math.max(10, cellW - padLeft - padRight);
         const cellLines: LayoutLine[] = [];
         let cellY = 0;
+        // Floating drawings inside a cell resolve against the cell content
+        // box on both axes: column, margin, and page references all mean
+        // the cell here. Its height is unknown until the cell is filled,
+        // so vertical keywords pin to the cell top rather than resolving
+        // against the host page and landing a page below. The page index
+        // comes from the host so inside/outside keep their side
+        // (F-TBXFLOAT). Built on the first float only, nested tables
+        // included (they take the thunk); most cells have none. A
+        // layoutInCell="0" float registers a resolver that the placement
+        // pass runs once the cell's page position is final.
+        const outsideResolvers: ((hostCtx: FloatingAnchorContext) => void)[] = [];
+        cellOutsideResolvers.push(outsideResolvers);
+        let cellAnchorCtx: FloatingAnchorContext | undefined;
+        const getCellAnchorCtx = (): FloatingAnchorContext => {
+          if (cellAnchorCtx) return cellAnchorCtx;
+          const cellBox: AnchorReferenceBox = { x: 0, y: 0, width: innerWidth };
+          cellAnchorCtx = {
+            pageBox: cellBox,
+            marginBox: cellBox,
+            getPageIndex: () => getAnchorCtx?.().getPageIndex() ?? 0,
+            getColumnWidthPt: () => innerWidth,
+            getColumnStartXPt: () => 0,
+            resolveOutsideCell: getAnchorCtx ? (resolve) => outsideResolvers.push(resolve) : undefined,
+          };
+          return cellAnchorCtx;
+        };
 
-        for (const child of cell.children) {
+        for (let ci = 0; ci < cell.children.length; ci++) {
+          const child = cell.children[ci]!;
           if (child.type === 'paragraph') {
-            const pLines = this.lineBreaker.breakParagraph(child, innerWidth);
+            // Cell paragraphs keep their spacing and line rule; Word
+            // applies space-before even at the top of a cell.
+            const { before, after } = paragraphSpacing(child, cell.children[ci - 1], cell.children[ci + 1]);
+            cellY += before;
+            const pLines = this.lineBreaker.breakParagraph(child, innerWidth, this.breakOptions);
             const paragraphTop = cellY;
             for (const pl of pLines) {
               const cellLine: LayoutLine = {
@@ -1212,22 +1382,17 @@ export class StandardPageEngine implements PageEngine {
                 fragments: pl.fragments,
                 baseline: pl.baseline,
               };
-              // Floating drawings inside a cell resolve against the cell
-              // content box (column/paragraph-relative offsets; page and
-              // margin references are approximated from the cell origin)
-              // so their textbox text lays out in the frame instead of
-              // vanishing (F-TBXFLOAT).
-              this.resolveFloatingFragments(cellLine, { top: 0, right: 0, bottom: 0, left: 0 }, paragraphTop);
+              if (lineHasFloat(cellLine)) this.resolveFloatingFragments(cellLine, paragraphTop, getCellAnchorCtx());
               cellLines.push(cellLine);
-              cellY += pl.bounds.height;
+              cellY += lineAdvance(child.style, pl.bounds.height);
             }
+            cellY += after;
           } else if (child.type === 'drawing') {
             const drawingFragment: LineFragment = {
               text: '',
               drawing: child,
               bounds: { x: 0, y: 0, width: child.widthPt, height: child.heightPt },
             };
-            this.layoutShapeText(drawingFragment, child.widthPt);
             cellLines.push({
               bounds: {
                 x: 0,
@@ -1295,6 +1460,7 @@ export class StandardPageEngine implements PageEngine {
                   }
                 : undefined,
               depth + 1,
+              getCellAnchorCtx,
             );
             cellY = nestedY;
           }
@@ -1373,6 +1539,24 @@ export class StandardPageEngine implements PageEngine {
           } else if (vAlign === 'bottom') {
             vOffset += extraSpace;
           }
+        }
+
+        // The cell content box now has its final origin on the host (row
+        // overflow and vertical alignment applied), so layoutInCell="0"
+        // floats can reach the real page from cell space. A nested table's
+        // cell chains through its host cell, so the shift composes up to
+        // the page (F-TBXFLOAT).
+        const outsideResolvers = cellOutsideResolvers[c] ?? [];
+        const hostCtx = outsideResolvers.length > 0 ? getAnchorCtx?.() : undefined;
+        if (hostCtx) {
+          const originX = cellX + pad.left;
+          const originY = margins.top + y + vOffset;
+          const resolveFromHost = (host: FloatingAnchorContext): void => {
+            const hostInCell = shiftAnchorContext(host, -originX, -originY);
+            for (const resolve of outsideResolvers) resolve(hostInCell);
+          };
+          if (hostCtx.resolveOutsideCell) hostCtx.resolveOutsideCell(resolveFromHost);
+          else resolveFromHost(hostCtx);
         }
 
         for (const l of lines) {

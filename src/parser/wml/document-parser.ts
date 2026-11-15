@@ -17,7 +17,7 @@ import { openPackage, resolvePartTarget, type OpcPackage } from '../../opc/packa
 import { loadEmbeddedFonts } from '../../fonts/font-table-loader.js';
 import { KNOWN_RELATIONSHIPS, type OpcRelationship } from '../../opc/relationships.js';
 import { parsePackageMetadata } from '../metadata/metadata-parser.js';
-import { defaultXmlAdapter, type XmlNode } from '../xml-adapter.js';
+import { localName, defaultXmlAdapter, type XmlNode, parseOnOff } from '../xml-adapter.js';
 import { parseWithMarkupCompatibility } from '../mce.js';
 import type { ImageResolver } from '../dml/image-parser.js';
 import { parseCommentsXml } from './comment-parser.js';
@@ -71,7 +71,7 @@ export function parseSectionHeaderFooterReferences(
   const footers: SectionFooters = {};
 
   for (const child of sectPrNode.children) {
-    const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+    const tag = localName(child.nodeName);
 
     if (tag === 'headerreference') {
       const type = (child.attributes['w:type'] ?? child.attributes['type'] ?? 'default').toLowerCase() as HeaderFooterType;
@@ -121,7 +121,7 @@ export function parseSectionProperties(node?: XmlNode): SectionProperties {
   if (!node) return props;
 
   for (const child of node.children) {
-    const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+    const tag = localName(child.nodeName);
 
     if (tag === 'pgsz') {
       const w = child.attributes['w:w'] ?? child.attributes['w'];
@@ -180,7 +180,7 @@ export function parseSectionProperties(node?: XmlNode): SectionProperties {
 
       const colDefs: ColumnProperties[] = [];
       for (const colChild of child.children) {
-        const colTag = colChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+        const colTag = localName(colChild.nodeName);
         if (colTag === 'col') {
           const colW = colChild.attributes['w:w'] ?? colChild.attributes['w'];
           const colSpace = colChild.attributes['w:space'] ?? colChild.attributes['space'];
@@ -310,7 +310,7 @@ export class StandardDocumentParser implements DocumentParser {
     let currentBlocks: BlockNode[] = [];
 
     for (const child of bodyNode.children) {
-      const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+      const tag = localName(child.nodeName);
 
       if (tag === 'p') {
         const paragraph = this.paragraphParser.parseParagraph(
@@ -428,6 +428,14 @@ export class StandardDocumentParser implements DocumentParser {
     if (stylesPart) {
       const stylesXml = parseWithMarkupCompatibility(customStylesXml!, (xml) => defaultXmlAdapter.parse(xml));
       const resolver = new StandardStyleResolver();
+      // Theme fonts first: style definitions reference them through
+      // w:asciiTheme and friends (headings use the major face, body text
+      // the minor face), so they must be known when styles are parsed.
+      const themeRel = docRels.find((r) => r.type === KNOWN_RELATIONSHIPS.THEME);
+      const themePart = pkg.getPart(resolveWordPartPath(pkg, docPartPath, themeRel?.target, 'word/theme/theme1.xml'));
+      if (themePart) {
+        resolver.loadTheme(parseWithMarkupCompatibility(textDecoder.decode(themePart.data), (xml) => defaultXmlAdapter.parse(xml)));
+      }
       resolver.loadStyles(stylesXml);
       styleResolver = resolver;
     }
@@ -575,9 +583,11 @@ export class StandardDocumentParser implements DocumentParser {
     const settingsRel = docRels.find((r) => r.type === KNOWN_RELATIONSHIPS.SETTINGS);
     const settingsPath = resolveWordPartPath(pkg, docPartPath, settingsRel?.target, 'word/settings.xml');
     const settingsPart = pkg.getPart(settingsPath);
-    const evenAndOddHeaders = settingsPart
-      ? parseEvenAndOddHeaders(parseWithMarkupCompatibility(textDecoder.decode(settingsPart.data), (xml) => defaultXmlAdapter.parse(xml)))
-      : false;
+    const settingsRoot = settingsPart
+      ? parseWithMarkupCompatibility(textDecoder.decode(settingsPart.data), (xml) => defaultXmlAdapter.parse(xml))
+      : undefined;
+    const evenAndOddHeaders = settingsRoot ? parseEvenAndOddHeaders(settingsRoot) : false;
+    const defaultTabStopPt = settingsRoot ? parseDefaultTabStop(settingsRoot) : undefined;
 
     // 11. Parse document XML
     const rootNode = parseWithMarkupCompatibility(textDecoder.decode(docPart.data), (xml) => defaultXmlAdapter.parse(xml));
@@ -600,8 +610,32 @@ export class StandardDocumentParser implements DocumentParser {
     // does, while a hand-built AST (flag undefined) that supplies an
     // even header means to use it (F-HDREVEN).
     for (const section of document.sections) section.properties.evenAndOddHeaders = evenAndOddHeaders;
+    if (defaultTabStopPt !== undefined) document.settings = { ...document.settings, defaultTabStopPt };
     return document;
   }
+}
+
+function settingsElement(settingsRoot: XmlNode): XmlNode | undefined {
+  return localName(settingsRoot.nodeName) === 'settings'
+    ? settingsRoot
+    : settingsRoot.children.find((c) => localName(c.nodeName) === 'settings');
+}
+
+/**
+ * `w:defaultTabStop` (§17.15.1.25) in points, or undefined when absent or
+ * not a positive number. Many locales set it to 1.25cm (709 twips) or
+ * 0.8cm (454 twips) rather than Word's 720-twip default, and every tab
+ * past the last custom stop lands on this grid.
+ */
+export function parseDefaultTabStop(settingsRoot: XmlNode): number | undefined {
+  const root = settingsElement(settingsRoot);
+  if (!root) return undefined;
+  for (const child of root.children) {
+    if (localName(child.nodeName) !== 'defaulttabstop') continue;
+    const twips = Number(child.attributes['w:val'] ?? child.attributes['val']);
+    return Number.isFinite(twips) && twips > 0 ? twipsToPt(twips) : undefined;
+  }
+  return undefined;
 }
 
 /** True when word/settings.xml turns on distinct even-page headers/footers. */
@@ -611,10 +645,10 @@ export function parseEvenAndOddHeaders(settingsRoot: XmlNode): boolean {
     : settingsRoot.children.find((c) => c.nodeName.toLowerCase().endsWith('settings'));
   if (!root) return false;
   for (const child of root.children) {
-    const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+    const tag = localName(child.nodeName);
     if (tag !== 'evenandoddheaders') continue;
-    const val = (child.attributes['w:val'] ?? child.attributes['val'])?.toLowerCase();
-    return val === undefined || !(val === '0' || val === 'false' || val === 'off');
+    // Absent w:val means on (ST_OnOff element default).
+    return parseOnOff(child.attributes['w:val'] ?? child.attributes['val']) ?? true;
   }
   return false;
 }

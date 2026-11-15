@@ -3,6 +3,16 @@ import { defaultXmlAdapter } from '../../src/parser/xml-adapter.js';
 import { StandardTableParser } from '../../src/parser/wml/table-parser.js';
 
 describe('OOXML Table Parser', () => {
+  it('reads element local names through the shared helper, whatever the prefix spelling', () => {
+    // A prefix with a hyphen is a valid XML name the old inline regex
+    // (`^[a-zA-Z0-9]+:`) left in place, so rows and cells were missed.
+    const xml = `<w-x:tbl xmlns:w-x="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w-x:tr><w-x:tc><w-x:p><w-x:r><w-x:t>A</w-x:t></w-x:r></w-x:p></w-x:tc><w-x:tc><w-x:p/></w-x:tc></w-x:tr></w-x:tbl>`;
+    const table = new StandardTableParser().parseTable(defaultXmlAdapter.parse(xml));
+    expect(table.rows).toHaveLength(1);
+    expect(table.rows[0]!.children).toHaveLength(2);
+    expect(table.rows[0]!.children[0]!.children[0]).toEqual({ type: 'paragraph', children: [{ type: 'run', text: 'A' }] });
+  });
+
   it('should parse table rows, cells, and gridSpan', () => {
     const xml = `
 <w:tbl xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">

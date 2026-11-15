@@ -1,7 +1,7 @@
 import { twipsToPt } from '../../types/common.js';
-import type { ParagraphStyle, TableStyle, TabLeader, TabStop, TabStopAlignment, TextStyle } from '../../types/style.js';
+import type { LineSpacingRule, ParagraphStyle, TableStyle, TabLeader, TabStop, TabStopAlignment, TextStyle } from '../../types/style.js';
 import { parseTablePropertiesNode } from './table-properties.js';
-import type { XmlNode } from '../xml-adapter.js';
+import { localName, parseOnOff, type XmlNode } from '../xml-adapter.js';
 
 /**
  * Resolves cascading styles from word/styles.xml according to ISO/IEC 29500-1.
@@ -18,17 +18,88 @@ export interface StyleDefinition {
   tableStyle?: TableStyle;
 }
 
-export function parseRunProperties(node?: XmlNode): TextStyle {
+/**
+ * Fonts of the document theme's `a:fontScheme` (ISO/IEC 29500-1
+ * §20.1.4.1.18): the major (heading) and minor (body) faces for Latin,
+ * East Asian, and complex-script text. Empty typefaces are left unset.
+ */
+export interface ThemeFonts {
+  majorLatin?: string;
+  majorEastAsia?: string;
+  majorComplex?: string;
+  minorLatin?: string;
+  minorEastAsia?: string;
+  minorComplex?: string;
+}
+
+function findDescendant(node: XmlNode, name: string): XmlNode | undefined {
+  for (const child of node.children) {
+    if (localName(child.nodeName) === name) return child;
+    const hit = findDescendant(child, name);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+/** Reads the font scheme out of a parsed `word/theme/theme1.xml` tree. */
+export function parseThemeFonts(themeRoot: XmlNode): ThemeFonts {
+  const scheme = localName(themeRoot.nodeName) === 'fontscheme' ? themeRoot : findDescendant(themeRoot, 'fontscheme');
+  const fonts: ThemeFonts = {};
+  if (!scheme) return fonts;
+  const face = (group: XmlNode, name: string): string | undefined => {
+    const el = group.children.find((c) => localName(c.nodeName) === name);
+    const typeface = el?.attributes['typeface']?.trim();
+    return typeface ? typeface : undefined;
+  };
+  for (const group of scheme.children) {
+    const tag = localName(group.nodeName);
+    if (tag === 'majorfont') {
+      fonts.majorLatin = face(group, 'latin');
+      fonts.majorEastAsia = face(group, 'ea');
+      fonts.majorComplex = face(group, 'cs');
+    } else if (tag === 'minorfont') {
+      fonts.minorLatin = face(group, 'latin');
+      fonts.minorEastAsia = face(group, 'ea');
+      fonts.minorComplex = face(group, 'cs');
+    }
+  }
+  return fonts;
+}
+
+/**
+ * Resolves an ST_Theme token (`majorHAnsi`, `minorEastAsia`, ...) to the
+ * theme face it names; undefined when the theme has no such face.
+ */
+export function themeFontFor(token: string | undefined, fonts: ThemeFonts | undefined): string | undefined {
+  if (!token || !fonts) return undefined;
+  const t = token.toLowerCase();
+  const major = t.startsWith('major');
+  if (t.endsWith('eastasia')) return (major ? fonts.majorEastAsia : fonts.minorEastAsia) ?? (major ? fonts.majorLatin : fonts.minorLatin);
+  if (t.endsWith('bidi')) return (major ? fonts.majorComplex : fonts.minorComplex) ?? (major ? fonts.majorLatin : fonts.minorLatin);
+  return major ? fonts.majorLatin : fonts.minorLatin;
+}
+
+/**
+ * Parses a `w:rPr`. `themeFonts` resolves theme font references in
+ * `w:rFonts` (§17.3.2.26: a theme attribute takes precedence over its
+ * literal sibling); without a theme the literal attribute is used.
+ */
+export function parseRunProperties(node?: XmlNode, themeFonts?: ThemeFonts): TextStyle {
   if (!node) return {};
   const style: TextStyle = {};
 
   for (const child of node.children) {
-    const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+    const tag = localName(child.nodeName);
     const val = child.attributes['w:val'] ?? child.attributes['val'];
 
     switch (tag) {
       case 'rfonts': {
-        const font = child.attributes['w:ascii'] ?? child.attributes['ascii'] ?? val;
+        const attr = (name: string): string | undefined => child.attributes[`w:${name}`] ?? child.attributes[name];
+        const font =
+          themeFontFor(attr('asciiTheme') ?? attr('hAnsiTheme'), themeFonts) ??
+          attr('ascii') ??
+          attr('hAnsi') ??
+          val;
         if (font) style.fontFamily = font;
         break;
       }
@@ -87,7 +158,7 @@ export function parseParagraphProperties(node?: XmlNode): ParagraphStyle {
   const style: ParagraphStyle = {};
 
   for (const child of node.children) {
-    const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+    const tag = localName(child.nodeName);
     const val = child.attributes['w:val'] ?? child.attributes['val'];
 
     switch (tag) {
@@ -102,36 +173,49 @@ export function parseParagraphProperties(node?: XmlNode): ParagraphStyle {
         const before = child.attributes['w:before'] ?? child.attributes['before'];
         const after = child.attributes['w:after'] ?? child.attributes['after'];
         const line = child.attributes['w:line'] ?? child.attributes['line'];
-        const lineRule = (
+        const lineRuleRaw = (
           child.attributes['w:lineRule'] ?? child.attributes['lineRule'] ?? child.attributes['w:linerule'] ?? child.attributes['linerule'] ?? 'auto'
         ).toLowerCase();
+        const lineRule: LineSpacingRule =
+          lineRuleRaw === 'exact' ? 'exact' : lineRuleRaw === 'atleast' ? 'atLeast' : lineRuleRaw === 'atmost' ? 'atMost' : 'auto';
 
         if (before) style.spaceBeforePt = twipsToPt(Number(before));
         if (after) style.spaceAfterPt = twipsToPt(Number(after));
         if (line) {
           const lineVal = Number(line);
-          if (lineRule === 'exact' || lineRule === 'atLeast' || lineRule === 'atMost') {
+          style.lineSpacingRule = lineRule;
+          if (lineRule !== 'auto') {
             // With an explicit rule, w:line is in twips.
             style.lineSpacingPt = twipsToPt(lineVal);
+            style.lineSpacingMultiple = undefined;
           } else {
             // lineRule="auto" (the default): w:line is in 240ths of a line
-            // (v2 N9). The AST stores an absolute height, so approximate one
-            // single line as ~1.2 × the default 11pt body font (≈13.2pt).
-            style.lineSpacingPt = (lineVal / 240) * 13.2;
+            // (v2 N9). The multiple scales the real line height at layout
+            // time; the point value approximates it on an 11pt line.
+            const multiple = lineVal / 240;
+            style.lineSpacingMultiple = multiple;
+            style.lineSpacingPt = multiple * 13.2;
           }
         }
         break;
       }
       case 'ind': {
-        const left = child.attributes['w:left'] ?? child.attributes['left'];
-        const right = child.attributes['w:right'] ?? child.attributes['right'];
-        const firstLine = child.attributes['w:firstline'] ?? child.attributes['firstLine'];
-        const hanging = child.attributes['w:hanging'] ?? child.attributes['hanging'];
+        // w:start/w:end are the strict spellings of w:left/w:right
+        // (§17.3.1.12). w:hanging outranks w:firstLine when both appear.
+        const attr = (name: string): string | undefined => child.attributes[`w:${name}`] ?? child.attributes[name];
+        const left = attr('left') ?? attr('start');
+        const right = attr('right') ?? attr('end');
+        const firstLine = attr('firstLine') ?? attr('firstline');
+        const hanging = attr('hanging');
 
         if (left) style.indentLeftPt = twipsToPt(Number(left));
         if (right) style.indentRightPt = twipsToPt(Number(right));
-        if (firstLine) style.firstLineIndentPt = twipsToPt(Number(firstLine));
-        else if (hanging) style.firstLineIndentPt = -twipsToPt(Number(hanging));
+        if (hanging) style.firstLineIndentPt = -twipsToPt(Number(hanging));
+        else if (firstLine) style.firstLineIndentPt = twipsToPt(Number(firstLine));
+        break;
+      }
+      case 'contextualspacing': {
+        style.contextualSpacing = parseOnOff(val) ?? true;
         break;
       }
       case 'numpr': {
@@ -157,7 +241,7 @@ export function parseParagraphProperties(node?: XmlNode): ParagraphStyle {
       case 'tabs': {
         const tabStops: TabStop[] = [];
         for (const tabChild of child.children) {
-          const tabTag = tabChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+          const tabTag = localName(tabChild.nodeName);
           if (tabTag === 'tab') {
             const tabVal = (tabChild.attributes['w:val'] ?? tabChild.attributes['val'] ?? 'left').toLowerCase();
             const tabPos = tabChild.attributes['w:pos'] ?? tabChild.attributes['pos'];
@@ -188,8 +272,19 @@ export function parseParagraphProperties(node?: XmlNode): ParagraphStyle {
 
 export interface StyleResolver {
   loadStyles(stylesXmlNode: XmlNode): void;
+  /** Loads the theme font scheme; may be called before or after loadStyles. */
+  loadTheme?(themeXmlNode: XmlNode): void;
+  getThemeFonts?(): ThemeFonts;
+  /** Paragraph style chain for `styleId`, or the default paragraph style when absent. */
   resolveParagraphStyle(styleId?: string): ParagraphStyle;
+  /** Run style chain for one style id, seeded with the document defaults. */
   resolveRunStyle(styleId?: string): TextStyle;
+  /**
+   * Run style for text inside a paragraph (§17.7.2): document defaults,
+   * then the paragraph style chain (default paragraph style when none is
+   * named), then the character style chain. Direct `w:rPr` goes on top.
+   */
+  resolveRunStyleInParagraph?(paragraphStyleId?: string, runStyleId?: string): TextStyle;
   resolveTableStyle(styleId?: string): TableStyle;
   getDefaultRunStyle(): TextStyle;
   getDefaultParagraphStyle(): ParagraphStyle;
@@ -197,20 +292,40 @@ export interface StyleResolver {
 
 export class StandardStyleResolver implements StyleResolver {
   private styles = new Map<string, StyleDefinition>();
-  private defaultRunStyle: TextStyle = {
+  private stylesXmlNode: XmlNode | undefined;
+  private themeFonts: ThemeFonts = {};
+  /** The `w:default="1"` paragraph style (usually Normal), applied when a paragraph names none. */
+  private defaultParagraphStyleId: string | undefined;
+  private readonly builtinRunStyle: TextStyle = {
     fontFamily: 'Calibri',
     fontSizePt: 11,
     color: '#000000',
   };
-  private defaultParagraphStyle: ParagraphStyle = {
+  private readonly builtinParagraphStyle: ParagraphStyle = {
     alignment: 'left',
   };
+  private defaultRunStyle: TextStyle = { ...this.builtinRunStyle };
+  private defaultParagraphStyle: ParagraphStyle = { ...this.builtinParagraphStyle };
+
+  loadTheme(themeXmlNode: XmlNode): void {
+    this.themeFonts = parseThemeFonts(themeXmlNode);
+    // Style definitions were parsed against the previous theme; redo them.
+    if (this.stylesXmlNode) this.loadStyles(this.stylesXmlNode);
+  }
+
+  getThemeFonts(): ThemeFonts {
+    return { ...this.themeFonts };
+  }
 
   loadStyles(stylesXmlNode: XmlNode): void {
+    this.stylesXmlNode = stylesXmlNode;
     this.styles.clear();
+    this.defaultParagraphStyleId = undefined;
+    this.defaultRunStyle = { ...this.builtinRunStyle };
+    this.defaultParagraphStyle = { ...this.builtinParagraphStyle };
 
     for (const child of stylesXmlNode.children) {
-      const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+      const tag = localName(child.nodeName);
 
       if (tag === 'docdefaults') {
         this.parseDocDefaults(child);
@@ -222,11 +337,11 @@ export class StandardStyleResolver implements StyleResolver {
 
   private parseDocDefaults(node: XmlNode): void {
     for (const child of node.children) {
-      const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+      const tag = localName(child.nodeName);
       if (tag === 'rprdefault') {
         const rPr = child.children.find((c) => c.nodeName.endsWith('rPr') || c.nodeName === 'rPr');
         if (rPr) {
-          this.defaultRunStyle = { ...this.defaultRunStyle, ...parseRunProperties(rPr) };
+          this.defaultRunStyle = { ...this.defaultRunStyle, ...parseRunProperties(rPr, this.themeFonts) };
         }
       } else if (tag === 'pprdefault') {
         const pPr = child.children.find((c) => c.nodeName.endsWith('pPr') || c.nodeName === 'pPr');
@@ -251,7 +366,7 @@ export class StandardStyleResolver implements StyleResolver {
     let tableStyle: TableStyle | undefined;
 
     for (const child of node.children) {
-      const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+      const tag = localName(child.nodeName);
       const val = child.attributes['w:val'] ?? child.attributes['val'];
 
       if (tag === 'basedon') {
@@ -261,7 +376,7 @@ export class StandardStyleResolver implements StyleResolver {
       } else if (tag === 'ppr') {
         paragraphStyle = parseParagraphProperties(child);
       } else if (tag === 'rpr') {
-        textStyle = parseRunProperties(child);
+        textStyle = parseRunProperties(child, this.themeFonts);
       } else if (tag === 'tblpr') {
         // Table style definitions embed their properties in w:tblPr —
         // borders, cell margins, width, alignment (v2 N8).
@@ -281,6 +396,28 @@ export class StandardStyleResolver implements StyleResolver {
     };
 
     this.styles.set(id, def);
+    if (isDefault && type === 'paragraph') this.defaultParagraphStyleId = id;
+  }
+
+  /** Base-first style chain for an id (cycle-safe). */
+  private chain(styleId: string | undefined): StyleDefinition[] {
+    const chain: StyleDefinition[] = [];
+    let current = styleId ? this.styles.get(styleId) : undefined;
+    const visited = new Set<string>();
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      chain.unshift(current);
+      current = current.basedOn ? this.styles.get(current.basedOn) : undefined;
+    }
+    return chain;
+  }
+
+  private applyRunChain(base: TextStyle, styleId: string | undefined): TextStyle {
+    let result = base;
+    for (const def of this.chain(styleId)) {
+      if (def.textStyle) result = { ...result, ...def.textStyle };
+    }
+    return result;
   }
 
   getDefaultRunStyle(): TextStyle {
@@ -293,48 +430,21 @@ export class StandardStyleResolver implements StyleResolver {
 
   resolveParagraphStyle(styleId?: string): ParagraphStyle {
     let result: ParagraphStyle = { ...this.defaultParagraphStyle };
-    if (!styleId) return result;
-
-    const chain: StyleDefinition[] = [];
-    let current = this.styles.get(styleId);
-    const visited = new Set<string>();
-
-    while (current && !visited.has(current.id)) {
-      visited.add(current.id);
-      chain.unshift(current); // Base styles first
-      current = current.basedOn ? this.styles.get(current.basedOn) : undefined;
-    }
-
-    for (const def of chain) {
+    for (const def of this.chain(styleId ?? this.defaultParagraphStyleId)) {
       if (def.paragraphStyle) {
         result = { ...result, ...def.paragraphStyle };
       }
     }
-
     return result;
   }
 
   resolveRunStyle(styleId?: string): TextStyle {
-    let result: TextStyle = { ...this.defaultRunStyle };
-    if (!styleId) return result;
+    return this.applyRunChain({ ...this.defaultRunStyle }, styleId ?? this.defaultParagraphStyleId);
+  }
 
-    const chain: StyleDefinition[] = [];
-    let current = this.styles.get(styleId);
-    const visited = new Set<string>();
-
-    while (current && !visited.has(current.id)) {
-      visited.add(current.id);
-      chain.unshift(current);
-      current = current.basedOn ? this.styles.get(current.basedOn) : undefined;
-    }
-
-    for (const def of chain) {
-      if (def.textStyle) {
-        result = { ...result, ...def.textStyle };
-      }
-    }
-
-    return result;
+  resolveRunStyleInParagraph(paragraphStyleId?: string, runStyleId?: string): TextStyle {
+    const inParagraph = this.applyRunChain({ ...this.defaultRunStyle }, paragraphStyleId ?? this.defaultParagraphStyleId);
+    return runStyleId ? this.applyRunChain(inParagraph, runStyleId) : inParagraph;
   }
 
   resolveTableStyle(styleId?: string): TableStyle {

@@ -1,7 +1,7 @@
 import type { BlockNode, CommentNode } from '../../types/ast.js';
 import type { ImageResolver } from '../dml/image-parser.js';
 import { parseWithMarkupCompatibility } from '../mce.js';
-import { defaultXmlAdapter, type XmlAdapter } from '../xml-adapter.js';
+import { localName, defaultXmlAdapter, type XmlAdapter } from '../xml-adapter.js';
 import type { NumberingResolver } from './numbering-resolver.js';
 import { defaultParagraphParser, type HyperlinkResolver, type ParagraphParser } from './paragraph-parser.js';
 import type { StyleResolver } from './style-resolver.js';
@@ -43,7 +43,7 @@ export class StandardCommentParser implements CommentParser {
     const root = parseWithMarkupCompatibility(xml, (xmlString) => this.xmlAdapter.parse(xmlString));
     const comments: CommentNode[] = [];
 
-    const commentNodes = root.children.filter((c) => c.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase() === 'comment');
+    const commentNodes = root.children.filter((c) => localName(c.nodeName) === 'comment');
 
     for (const cNode of commentNodes) {
       const id = cNode.attributes['w:id'] ?? cNode.attributes['id'] ?? '';
@@ -53,7 +53,7 @@ export class StandardCommentParser implements CommentParser {
 
       const children: BlockNode[] = [];
       for (const bChild of cNode.children) {
-        const bTag = bChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+        const bTag = localName(bChild.nodeName);
         if (bTag === 'p') {
           children.push(paragraphParser.parseParagraph(bChild, styleResolver, numberingResolver, imageResolver, hyperlinkResolver));
           children.push(...(paragraphParser.drainPendingBlocks?.() ?? []));

@@ -1,7 +1,7 @@
 import { KNOWN_RELATIONSHIPS, type OpcRelationship } from '../opc/relationships.js';
 import { guessMimeType } from '../parser/dml/image-parser.js';
 import { generatePresetGeometry, parseSvgPathToCommands } from '../parser/dml/shape-parser.js';
-import { defaultXmlAdapter, type XmlAdapter, type XmlNode } from '../parser/xml-adapter.js';
+import { localName, defaultXmlAdapter, type XmlAdapter, type XmlNode } from '../parser/xml-adapter.js';
 import type {
   BlockNode,
   CommentNode,
@@ -290,7 +290,7 @@ export class StandardOoxenWriter implements OoxenWriter {
     let found = false;
 
     const traverse = (node: XmlNode): void => {
-      const tag = node.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+      const tag = localName(node.nodeName);
       if (tag === 'title' && node.textContent?.trim()) {
         metadata.title = node.textContent.trim();
         found = true;
@@ -346,7 +346,7 @@ export class StandardOoxenWriter implements OoxenWriter {
     let endnotes: FootnoteNode[] | undefined;
 
     const findAsides = (node: XmlNode): void => {
-      const tag = node.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+      const tag = localName(node.nodeName);
       const cls = (node.attributes['class'] ?? '').toLowerCase();
 
       if (tag === 'aside' && cls.includes('footnotes')) {
@@ -409,12 +409,12 @@ export class StandardOoxenWriter implements OoxenWriter {
 
     let container = rootNode;
     const bodyNode = this.findFirstNode(rootNode, (n) => {
-      const tag = n.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+      const tag = localName(n.nodeName);
       return tag === 'body' || tag === 'article';
     });
     if (bodyNode) {
       const articleNode = this.findFirstNode(bodyNode, (n) => {
-        const tag = n.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+        const tag = localName(n.nodeName);
         return tag === 'article';
       });
       container = articleNode ?? bodyNode;
@@ -446,14 +446,14 @@ export class StandardOoxenWriter implements OoxenWriter {
     const aside = this.findFirstNode(
       rootNode,
       (n) =>
-        n.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '') === 'aside' &&
+        localName(n.nodeName) === 'aside' &&
         (n.attributes['class'] ?? '').includes('ooxen-comments'),
     );
     if (!aside) return undefined;
 
     const comments: CommentNode[] = [];
     for (const card of aside.children) {
-      const cardTag = card.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+      const cardTag = localName(card.nodeName);
       if (cardTag === 'div') {
         const id = (card.attributes['id'] ?? '').replace(/^comment-/, '');
         const author = card.attributes['data-author'];
@@ -461,7 +461,7 @@ export class StandardOoxenWriter implements OoxenWriter {
         const initials = card.attributes['data-initials'];
 
         const bodyChildren = card.children.filter((c) => {
-          const cTag = c.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+          const cTag = localName(c.nodeName);
           return cTag === 'p' || cTag === 'div' || cTag === 'table';
         });
 
@@ -485,7 +485,7 @@ export class StandardOoxenWriter implements OoxenWriter {
     const bodyNodes: XmlNode[] = [];
 
     for (const node of nodes) {
-      const tag = node.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+      const tag = localName(node.nodeName);
       if (tag === 'header') {
         headerNode = {
           type: 'header',
@@ -541,7 +541,7 @@ export class StandardOoxenWriter implements OoxenWriter {
     const blocks: BlockNode[] = [];
 
     for (const node of nodes) {
-      const tag = node.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+      const tag = localName(node.nodeName);
       if (tag === 'p') {
         blocks.push(this.parseHtmlParagraph(node));
       } else if (tag === 'table') {
@@ -563,7 +563,7 @@ export class StandardOoxenWriter implements OoxenWriter {
 
   private parseHtmlList(listNode: XmlNode, numId: number, level: number, outBlocks: BlockNode[]): void {
     for (const child of listNode.children) {
-      const tag = child.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+      const tag = localName(child.nodeName);
       if (tag === 'li') {
         const p = this.parseHtmlParagraph(child);
         p.style = {
@@ -576,7 +576,7 @@ export class StandardOoxenWriter implements OoxenWriter {
         outBlocks.push(p);
 
         for (const subChild of child.children) {
-          const subTag = subChild.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+          const subTag = localName(subChild.nodeName);
           if (subTag === 'ul' || subTag === 'ol') {
             const subNumId = subTag === 'ul' ? 1 : 2;
             this.parseHtmlList(subChild, subNumId, level + 1, outBlocks);
@@ -671,7 +671,7 @@ export class StandardOoxenWriter implements OoxenWriter {
 
     const runs: RunNode[] = [];
     for (const child of pNode.children) {
-      const tag = child.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+      const tag = localName(child.nodeName);
       if (tag === 'span') {
         runs.push(this.parseSpanToRun(child));
       } else if (tag === 'b' || tag === 'strong' || tag === 'i' || tag === 'em') {
@@ -679,7 +679,7 @@ export class StandardOoxenWriter implements OoxenWriter {
       } else if (tag === 'mark') {
         const commentId = child.attributes['data-comment-id'];
         for (const mChild of child.children) {
-          const mTag = mChild.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+          const mTag = localName(mChild.nodeName);
           if (mTag === 'span') {
             const r = this.parseSpanToRun(mChild);
             r.commentId = commentId;
@@ -711,7 +711,7 @@ export class StandardOoxenWriter implements OoxenWriter {
         };
 
         for (const iChild of child.children) {
-          const iTag = iChild.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+          const iTag = localName(iChild.nodeName);
           if (iTag === 'span') {
             const r = this.parseSpanToRun(iChild);
             r.revision = revInfo;
@@ -753,7 +753,7 @@ export class StandardOoxenWriter implements OoxenWriter {
           });
         } else {
           for (const aChild of child.children) {
-            const aTag = aChild.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+            const aTag = localName(aChild.nodeName);
             if (aTag === 'span') {
               runs.push(this.parseSpanToRun(aChild, hlink, aId));
             } else if (aTag === 'img') {
@@ -883,7 +883,7 @@ export class StandardOoxenWriter implements OoxenWriter {
 
     const runs: RunNode[] = [];
     for (const child of node.children) {
-      const tag = child.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+      const tag = localName(child.nodeName);
       if (tag === 'span') {
         runs.push(mergeStyle(this.parseSpanToRun(child, hyperlink, bookmarkName)));
       } else if (tag === 'b' || tag === 'strong') {
@@ -991,11 +991,11 @@ export class StandardOoxenWriter implements OoxenWriter {
 
     const findElements = (node: XmlNode): void => {
       for (const child of node.children) {
-        const tag = child.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+        const tag = localName(child.nodeName);
         if (tag === 'colgroup') {
           const cols: number[] = [];
           for (const colChild of child.children) {
-            const colTag = colChild.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+            const colTag = localName(colChild.nodeName);
             if (colTag === 'col') {
               const colCss = this.parseCssStyle(colChild.attributes['style']);
               if (colCss['width']?.endsWith('pt')) {
@@ -1083,7 +1083,7 @@ export class StandardOoxenWriter implements OoxenWriter {
     }
 
     for (const child of trNode.children) {
-      const tag = child.nodeName.toLowerCase().replace(/^[a-zA-Z0-9]+:/, '');
+      const tag = localName(child.nodeName);
       if (tag === 'td' || tag === 'th') {
         const colSpanAttr = child.attributes['colspan'];
         const colSpan = colSpanAttr ? Number(colSpanAttr) : undefined;

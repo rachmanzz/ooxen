@@ -48,4 +48,13 @@ describe('OPC Content Types', () => {
     expect(parsed.defaults).toEqual(original.defaults);
     expect(parsed.overrides).toEqual(original.overrides);
   });
+
+  it('escapes all five XML entities in attributes through the shared escaper', () => {
+    const xml = serializeContentTypes({
+      defaults: [],
+      overrides: [{ partName: "/word/a'b\"c<d>&e.xml", contentType: 'x/y' }],
+    });
+    expect(xml).toContain('PartName="/word/a&apos;b&quot;c&lt;d&gt;&amp;e.xml"');
+    expect(parseContentTypes(xml).overrides[0]?.partName).toBe("/word/a'b\"c<d>&e.xml");
+  });
 });

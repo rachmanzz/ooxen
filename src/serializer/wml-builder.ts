@@ -4,6 +4,7 @@ import type {
   DocumentNode,
   DrawingShapeNode,
   HeaderFooterNode,
+  ImageAnchor,
   ImageNode,
   ParagraphNode,
   RunNode,
@@ -13,6 +14,7 @@ import type {
   TableRowNode,
 } from '../types/ast.js';
 import { ptToEmu, ptToTwips } from '../types/common.js';
+import { escapeXml } from '../parser/xml-adapter.js';
 import type { ParagraphStyle, TableStyle, TextStyle } from '../types/style.js';
 
 /**
@@ -37,14 +39,6 @@ export function commentNumericId(comments: CommentNode[], id: string): number {
   return fallback > 0 ? fallback : 1;
 }
 
-export function escapeXml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
 
 function cleanHexColor(color?: string): string | undefined {
   if (!color) return undefined;
@@ -219,7 +213,7 @@ export class StandardWmlBuilder implements WmlBuilder {
   }
 
   private serializeParagraph(p: ParagraphNode, hyperlinkRelIds?: ReadonlyMap<string, string>): string {
-    const pPr = this.serializeParagraphProperties(p.style);
+    const pPr = this.serializeParagraphProperties(p.style, p.styleId);
     const content = this.serializeParagraphContent(p, hyperlinkRelIds);
 
     if (pPr.length === 0 && content.length === 0) {
@@ -376,9 +370,13 @@ export class StandardWmlBuilder implements WmlBuilder {
     return hash;
   }
 
-  private serializeParagraphProperties(style?: ParagraphStyle): string {
-    if (!style) return '';
+  private serializeParagraphProperties(style?: ParagraphStyle, styleId?: string): string {
+    if (!style && !styleId) return '';
     const inner: string[] = [];
+    // w:pStyle leads CT_PPrBase; the named style survives in the written
+    // styles.xml (F-STYLELOSS), so the reference stays live.
+    if (styleId) inner.push(`      <w:pStyle w:val="${escapeXml(styleId)}"/>`);
+    if (!style) return ['      <w:pPr>', ...inner, '      </w:pPr>'].join('\n');
 
     // Children must follow the CT_PPrBase schema sequence:
     // pageBreakBefore, keepNext, keepLines, numPr, tabs, spacing, ind, jc.
@@ -413,16 +411,22 @@ export class StandardWmlBuilder implements WmlBuilder {
       inner.push(['      <w:tabs>', ...tabElements, '      </w:tabs>'].join('\n'));
     }
 
-    if (style.spaceBeforePt !== undefined || style.spaceAfterPt !== undefined || style.lineSpacingPt !== undefined) {
+    const autoLine = style.lineSpacingRule === 'auto' || (style.lineSpacingRule === undefined && style.lineSpacingMultiple !== undefined);
+    if (style.spaceBeforePt !== undefined || style.spaceAfterPt !== undefined || style.lineSpacingPt !== undefined || autoLine) {
       const attrs: string[] = [];
       if (style.spaceBeforePt !== undefined) attrs.push(`w:before="${Math.round(ptToTwips(style.spaceBeforePt))}"`);
       if (style.spaceAfterPt !== undefined) attrs.push(`w:after="${Math.round(ptToTwips(style.spaceAfterPt))}"`);
-      if (style.lineSpacingPt !== undefined) {
+      if (autoLine) {
+        // lineRule="auto": w:line is in 240ths of a line.
+        attrs.push(`w:line="${Math.round((style.lineSpacingMultiple ?? 1) * 240)}"`);
+        attrs.push('w:lineRule="auto"');
+      } else if (style.lineSpacingPt !== undefined) {
         // ISO/IEC 29500-1: w:line is in twips only when w:lineRule is
-        // "exact"/"atLeast"; without a rule it means 240ths of a line.
-        // Emit the rule explicitly so the unit is unambiguous (v2 N9).
+        // "exact"/"atLeast"/"atMost". Emit the rule explicitly so the
+        // unit is unambiguous (v2 N9); a point value without a rule was
+        // laid out as a floor, so it is written as atLeast.
         attrs.push(`w:line="${Math.round(ptToTwips(style.lineSpacingPt))}"`);
-        attrs.push('w:lineRule="atLeast"');
+        attrs.push(`w:lineRule="${style.lineSpacingRule ?? 'atLeast'}"`);
       }
       inner.push(`      <w:spacing ${attrs.join(' ')}/>`);
     }
@@ -439,6 +443,9 @@ export class StandardWmlBuilder implements WmlBuilder {
         else attrs.push(`w:firstLine="${firstLineTwips}"`);
       }
       inner.push(`      <w:ind ${attrs.join(' ')}/>`);
+    }
+    if (style.contextualSpacing) {
+      inner.push('      <w:contextualSpacing/>');
     }
 
     if (style.alignment) {
@@ -547,6 +554,46 @@ export class StandardWmlBuilder implements WmlBuilder {
     return runXml;
   }
 
+  /**
+   * Opens `w:drawing` through `wp:docPr`: a floating drawing gets a
+   * `wp:anchor` with its position and the wrap element CT_Anchor requires
+   * (ISO/IEC 29500-1 §20.4.2.3; the layout model overlays floats without
+   * wrapping, so `wp:wrapNone`), an inline one gets `wp:inline`. Shared
+   * by pictures and shapes so both paths emit the same anchor (F-ANCHOR).
+   */
+  private serializeDrawingOpen(anchor: ImageAnchor | undefined, cx: number, cy: number, docPrAttrs: string): string[] {
+    if (!anchor) {
+      return [
+        '        <w:drawing>',
+        '          <wp:inline>',
+        `            <wp:extent cx="${cx}" cy="${cy}"/>`,
+        `            <wp:docPr ${docPrAttrs}/>`,
+      ];
+    }
+    const posH = anchor.horizontalAlign
+      ? `<wp:align>${escapeXml(anchor.horizontalAlign)}</wp:align>`
+      : `<wp:posOffset>${Math.round(ptToEmu(anchor.horizontalOffsetPt))}</wp:posOffset>`;
+    const posV = anchor.verticalAlign
+      ? `<wp:align>${escapeXml(anchor.verticalAlign)}</wp:align>`
+      : `<wp:posOffset>${Math.round(ptToEmu(anchor.verticalOffsetPt))}</wp:posOffset>`;
+    const behindDoc = anchor.behindDoc ? ' behindDoc="1"' : '';
+    const layoutInCell = anchor.layoutInCell === false ? '0' : '1';
+    return [
+      '        <w:drawing>',
+      `          <wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="0"${behindDoc} locked="0" layoutInCell="${layoutInCell}" allowOverlap="1">`,
+      '            <wp:simplePos x="0" y="0"/>',
+      `            <wp:positionH relativeFrom="${escapeXml(anchor.horizontalFrom)}">${posH}</wp:positionH>`,
+      `            <wp:positionV relativeFrom="${escapeXml(anchor.verticalFrom)}">${posV}</wp:positionV>`,
+      `            <wp:extent cx="${cx}" cy="${cy}"/>`,
+      '            <wp:wrapNone/>',
+      `            <wp:docPr ${docPrAttrs}/>`,
+    ];
+  }
+
+  private serializeDrawingClose(anchor: ImageAnchor | undefined): string[] {
+    return [anchor ? '          </wp:anchor>' : '          </wp:inline>', '        </w:drawing>'];
+  }
+
   private serializeImage(image: ImageNode): string {
     const cx = Math.round(ptToEmu(image.widthPt));
     const cy = Math.round(ptToEmu(image.heightPt));
@@ -567,58 +614,9 @@ export class StandardWmlBuilder implements WmlBuilder {
         ? `                    <a:blip r:embed="${escapeXml(relId)}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>`
         : `                    <a:blip r:link="${escapeXml(relId)}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>`;
 
-    const anchor = image.anchor;
-    if (anchor) {
-      const posH = anchor.horizontalAlign
-        ? `<wp:align>${escapeXml(anchor.horizontalAlign)}</wp:align>`
-        : `<wp:posOffset>${Math.round(ptToEmu(anchor.horizontalOffsetPt))}</wp:posOffset>`;
-      const posV = anchor.verticalAlign
-        ? `<wp:align>${escapeXml(anchor.verticalAlign)}</wp:align>`
-        : `<wp:posOffset>${Math.round(ptToEmu(anchor.verticalOffsetPt))}</wp:posOffset>`;
-      const behindDoc = anchor.behindDoc ? ' behindDoc="1"' : '';
-      return [
-        '        <w:drawing>',
-        `          <wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="0"${behindDoc} locked="0" layoutInCell="1" allowOverlap="1">`,
-        '            <wp:simplePos x="0" y="0"/>',
-        `            <wp:positionH relativeFrom="${escapeXml(anchor.horizontalFrom)}">${posH}</wp:positionH>`,
-        `            <wp:positionV relativeFrom="${escapeXml(anchor.verticalFrom)}">${posV}</wp:positionV>`,
-        `            <wp:extent cx="${cx}" cy="${cy}"/>`,
-        // CT_Anchor requires exactly one wrap element (ISO/IEC 29500-1
-        // §20.4.2.3); without it Word reports unreadable content. The
-        // layout model overlays floats without wrapping, so wrapNone.
-        '            <wp:wrapNone/>',
-        `            <wp:docPr id="${escapeXml(id)}" name="${escapeXml(name)}" descr="${escapeXml(altText)}"/>`,
-        '            <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">',
-        '              <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">',
-        '                <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">',
-        '                  <pic:nvPicPr>',
-        `                    <pic:cNvPr id="0" name="${escapeXml(name)}" descr="${escapeXml(altText)}"/>`,
-        '                    <pic:cNvPicPr/>',
-        '                  </pic:nvPicPr>',
-        '                  <pic:blipFill>',
-        blip,
-        '                    <a:stretch><a:fillRect/></a:stretch>',
-        '                  </pic:blipFill>',
-        '                  <pic:spPr>',
-        '                    <a:xfrm>',
-        '                      <a:off x="0" y="0"/>',
-        `                      <a:ext cx="${cx}" cy="${cy}"/>`,
-        '                    </a:xfrm>',
-        '                    <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>',
-        '                  </pic:spPr>',
-        '                </pic:pic>',
-        '              </a:graphicData>',
-        '            </a:graphic>',
-        '          </wp:anchor>',
-        '        </w:drawing>',
-      ].join('\n');
-    }
-
+    const docPrAttrs = `id="${escapeXml(id)}" name="${escapeXml(name)}" descr="${escapeXml(altText)}"`;
     return [
-      '        <w:drawing>',
-      '          <wp:inline>',
-      `            <wp:extent cx="${cx}" cy="${cy}"/>`,
-      `            <wp:docPr id="${escapeXml(id)}" name="${escapeXml(name)}" descr="${escapeXml(altText)}"/>`,
+      ...this.serializeDrawingOpen(image.anchor, cx, cy, docPrAttrs),
       '            <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">',
       '              <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">',
       '                <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">',
@@ -640,8 +638,7 @@ export class StandardWmlBuilder implements WmlBuilder {
       '                </pic:pic>',
       '              </a:graphicData>',
       '            </a:graphic>',
-      '          </wp:inline>',
-      '        </w:drawing>',
+      ...this.serializeDrawingClose(image.anchor),
     ].join('\n');
   }
 
@@ -709,25 +706,7 @@ export class StandardWmlBuilder implements WmlBuilder {
 
     // Floating shapes keep their wp:anchor placement on round-trip;
     // without it every anchored banner would demote to inline (F-ANCHOR).
-    const shapeAnchor = shape.anchor;
-    const anchorOpen = shapeAnchor
-      ? [
-          '        <w:drawing>',
-          `          <wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="0"${shapeAnchor.behindDoc ? ' behindDoc="1"' : ''} locked="0" layoutInCell="1" allowOverlap="1">`,
-          '            <wp:simplePos x="0" y="0"/>',
-          `            <wp:positionH relativeFrom="${escapeXml(shapeAnchor.horizontalFrom)}">${shapeAnchor.horizontalAlign ? `<wp:align>${escapeXml(shapeAnchor.horizontalAlign)}</wp:align>` : `<wp:posOffset>${Math.round(ptToEmu(shapeAnchor.horizontalOffsetPt))}</wp:posOffset>`}</wp:positionH>`,
-          `            <wp:positionV relativeFrom="${escapeXml(shapeAnchor.verticalFrom)}">${shapeAnchor.verticalAlign ? `<wp:align>${escapeXml(shapeAnchor.verticalAlign)}</wp:align>` : `<wp:posOffset>${Math.round(ptToEmu(shapeAnchor.verticalOffsetPt))}</wp:posOffset>`}</wp:positionV>`,
-          `            <wp:extent cx="${cx}" cy="${cy}"/>`,
-          '            <wp:wrapNone/>',
-          `            <wp:docPr id="${escapeXml(id)}" name="${escapeXml(name)}"/>`,
-        ]
-      : [
-          '        <w:drawing>',
-          '          <wp:inline>',
-          `            <wp:extent cx="${cx}" cy="${cy}"/>`,
-          `            <wp:docPr id="${escapeXml(id)}" name="${escapeXml(name)}"/>`,
-        ];
-    const anchorClose = shapeAnchor ? '          </wp:anchor>' : '          </wp:inline>';
+    const anchorOpen = this.serializeDrawingOpen(shape.anchor, cx, cy, `id="${escapeXml(id)}" name="${escapeXml(name)}"`);
 
     return [
       ...anchorOpen,
@@ -753,8 +732,7 @@ export class StandardWmlBuilder implements WmlBuilder {
       '                </wps:wsp>',
       '              </a:graphicData>',
       '            </a:graphic>',
-      anchorClose,
-      '        </w:drawing>'
+      ...this.serializeDrawingClose(shape.anchor),
     ].filter(Boolean).join('\n');
   }
 

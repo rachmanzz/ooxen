@@ -1,17 +1,11 @@
 import type { BlockNode, DrawingShapeNode, ParagraphNode, VectorPathCommand } from '../../types/ast.js';
-import type { XmlNode } from '../xml-adapter.js';
+import { localName, type XmlNode } from '../xml-adapter.js';
 import { parseAnchorFromContainer, type ImageResolver } from './image-parser.js';
 import type { NumberingResolver } from '../wml/numbering-resolver.js';
 import type { HyperlinkResolver, ParagraphParser } from '../wml/paragraph-parser.js';
 import type { StyleResolver } from '../wml/style-resolver.js';
 
 const EMU_PER_POINT = 12700;
-
-/** Local element name without namespace prefix, lowercased. */
-function localName(nodeName: string): string {
-  const colon = nodeName.lastIndexOf(':');
-  return (colon >= 0 ? nodeName.slice(colon + 1) : nodeName).toLowerCase();
-}
 
 function parseEmu(val?: string): number {
   if (!val) return 0;
@@ -126,6 +120,36 @@ export function generatePresetGeometry(preset: string, widthPt: number, heightPt
       return [
         { type: 'moveTo', points: [0, 0] },
         { type: 'lineTo', points: [w, h] },
+      ];
+
+    // Elbow connectors: bentConnector2 bends once (across, then down);
+    // the three-plus-bend presets are approximated by the common
+    // across/down/across elbow through the box centre (F-CONNECTOR).
+    case 'bentconnector2':
+      return [
+        { type: 'moveTo', points: [0, 0] },
+        { type: 'lineTo', points: [w, 0] },
+        { type: 'lineTo', points: [w, h] },
+      ];
+    case 'bentconnector3':
+    case 'bentconnector4':
+    case 'bentconnector5':
+      return [
+        { type: 'moveTo', points: [0, 0] },
+        { type: 'lineTo', points: [w / 2, 0] },
+        { type: 'lineTo', points: [w / 2, h] },
+        { type: 'lineTo', points: [w, h] },
+      ];
+
+    // Curved connectors: one S-curve with horizontal tangents at both
+    // ends, the shape Word draws for curvedConnector3.
+    case 'curvedconnector2':
+    case 'curvedconnector3':
+    case 'curvedconnector4':
+    case 'curvedconnector5':
+      return [
+        { type: 'moveTo', points: [0, 0] },
+        { type: 'cubicBezTo', points: [w / 2, 0, w / 2, h, w, h] },
       ];
 
     default:
@@ -284,7 +308,7 @@ function parseCustomGeometry(custGeomNode: XmlNode, widthPt: number, heightPt: n
   const commands: VectorPathCommand[] = [];
 
   for (const cmdNode of pathNode.children) {
-    const tag = cmdNode.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+    const tag = localName(cmdNode.nodeName);
 
     if (tag === 'moveto') {
       const pt = cmdNode.children.find((c) => c.nodeName.toLowerCase().endsWith('pt'));
@@ -338,7 +362,7 @@ function parseCustomGeometry(custGeomNode: XmlNode, widthPt: number, heightPt: n
  * Standard DrawingML / VML shape parser into Universal AST DrawingShapeNode.
  */
 export function parseDrawingNode(node: XmlNode): DrawingShapeNode | undefined {
-  const rootTag = node.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+  const rootTag = localName(node.nodeName);
 
   // 1. Handle DrawingML (<w:drawing>)
   if (rootTag === 'drawing') {
@@ -397,7 +421,12 @@ export function parseDrawingNode(node: XmlNode): DrawingShapeNode | undefined {
 
     const prstGeom = spPr?.children.find((c) => c.nodeName.toLowerCase().endsWith('prstgeom'));
     const prst = prstGeom?.attributes['prst'] ?? 'rect';
-    const isConnector = prst.toLowerCase().startsWith('straightconnector');
+    // Word's Line tool writes prst="line"; the connector tools write
+    // straight/bent/curvedConnectorN. All are strokes without a box, so
+    // a zero extent on any of them means a real line (F-CONNECTOR).
+    const prstLower = prst.toLowerCase();
+    const isStraightLine = prstLower === 'line' || prstLower.startsWith('straightconnector');
+    const isConnector = isStraightLine || /^(bent|curved)connector/.test(prstLower);
     const ln = spPr?.children.find((c) => c.nodeName.toLowerCase().endsWith('ln'));
 
     // Defaults if missing. A straight connector with a zero extent is a
@@ -456,7 +485,10 @@ export function parseDrawingNode(node: XmlNode): DrawingShapeNode | undefined {
         flipH = isTruthyAttr(xfrm?.attributes['flipH']);
         flipV = isTruthyAttr(xfrm?.attributes['flipV']);
       }
-      commands = generatePresetGeometry(isConnector ? 'line' : prst, geoW, geoH);
+      // A connector with no height (or width) is a straight line whatever
+      // its preset; an elbow or curve with a real box keeps its own path.
+      const geometryPreset = isConnector && (isStraightLine || geoW === 0 || geoH === 0) ? 'line' : prst;
+      commands = generatePresetGeometry(geometryPreset, geoW, geoH);
       if (flipH || flipV) {
         // The preset line runs top-left to bottom-right; a:xfrm flips
         // mirror it inside its own box (bottom-left to top-right, ...).
@@ -532,7 +564,7 @@ export function parseTextboxBlocks(
   imageResolver?: ImageResolver,
   hyperlinkResolver?: HyperlinkResolver,
 ): BlockNode[] | undefined {
-  const rootTag = node.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+  const rootTag = localName(node.nodeName);
   if (rootTag !== 'drawing') return undefined;
 
   const container = node.children.find((c) => {

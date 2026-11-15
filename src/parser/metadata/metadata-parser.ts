@@ -1,7 +1,7 @@
 import { KNOWN_RELATIONSHIPS } from '../../opc/relationships.js';
 import type { OpcPackage } from '../../opc/package.js';
 import type { DocumentMetadata } from '../../types/ast.js';
-import { defaultXmlAdapter, type XmlAdapter } from '../xml-adapter.js';
+import { defaultXmlAdapter, localName, type XmlAdapter } from '../xml-adapter.js';
 
 const textDecoder = new TextDecoder();
 
@@ -16,11 +16,11 @@ export function parseCoreProperties(
   const metadata: DocumentMetadata = {};
 
   for (const child of root.children) {
-    const localName = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+    const tag = localName(child.nodeName);
     const text = child.textContent?.trim();
     if (!text) continue;
 
-    switch (localName) {
+    switch (tag) {
       case 'title':
         metadata.title = text;
         break;
@@ -68,11 +68,11 @@ export function parseAppProperties(
   const metadata: Partial<DocumentMetadata> = {};
 
   for (const child of root.children) {
-    const localName = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+    const tag = localName(child.nodeName);
     const text = child.textContent?.trim();
     if (!text) continue;
 
-    switch (localName) {
+    switch (tag) {
       case 'application':
         metadata.application = text;
         break;

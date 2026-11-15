@@ -1,7 +1,7 @@
 import type { ImageAnchor, ImageNode } from '../../types/ast.js';
 import { emuToPt, uint8ArrayToBase64 } from '../../types/common.js';
 import { parseVmlSize } from './shape-parser.js';
-import type { XmlNode } from '../xml-adapter.js';
+import { localName, parseOnOff, type XmlNode } from '../xml-adapter.js';
 
 /**
  * Guesses standard MIME type from a file name or extension.
@@ -51,7 +51,10 @@ export function parseAnchorFromContainer(container: XmlNode): ImageAnchor | unde
     verticalFrom: posV?.attributes['relativeFrom'] ?? posV?.attributes['relativefrom'] ?? 'paragraph',
     verticalOffsetPt: emuToPt(Number.parseFloat(offV?.textContent ?? '0') || 0),
     verticalAlign: offV ? undefined : alignV || undefined,
-    behindDoc: container.attributes['behindDoc'] === '1' || container.attributes['behinddoc'] === '1',
+    // Both are ST_OnOff; an invalid or empty value falls back to the
+    // schema default (behindDoc false, layoutInCell true via undefined).
+    behindDoc: parseOnOff(container.attributes['behindDoc'] ?? container.attributes['behinddoc']) ?? false,
+    layoutInCell: parseOnOff(container.attributes['layoutInCell'] ?? container.attributes['layoutincell']),
   };
 }
 
@@ -59,7 +62,7 @@ export function parseAnchorFromContainer(container: XmlNode): ImageAnchor | unde
  * Parses DrawingML <pic:pic> or VML <v:imagedata> into Universal AST ImageNode.
  */
 export function parseImageNode(node: XmlNode, imageResolver?: ImageResolver): ImageNode | undefined {
-  const rootTag = node.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+  const rootTag = localName(node.nodeName);
 
   // 1. DrawingML (<w:drawing>)
   if (rootTag === 'drawing') {

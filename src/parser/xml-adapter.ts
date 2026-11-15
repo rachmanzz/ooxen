@@ -51,28 +51,69 @@ export function isTextNode(node: XmlNode): boolean {
   return node.kind === 'text';
 }
 
+/** Local element name without namespace prefix, lowercased (`w:p` -> `p`). */
+export function localName(nodeName: string): string {
+  const colon = nodeName.lastIndexOf(':');
+  return (colon >= 0 ? nodeName.slice(colon + 1) : nodeName).toLowerCase();
+}
+
 const NAMED_ENTITIES: Record<string, string> = { quot: '"', apos: "'", lt: '<', gt: '>', amp: '&' };
 
 function decodeXmlEntities(text: string): string {
   // One pass over every reference form (F-PENT-REF): sequential passes
   // let the output of one reference join the input of the next, so
-  // &amp;#65; or &#38;lt; would double-decode. Out-of-range or surrogate
-  // code points are left literal.
+  // &amp;#65; or &#38;lt; would double-decode.
   return text.replace(/&(?:#([0-9]+)|#x([0-9a-fA-F]+)|(quot|apos|lt|gt|amp));/g, (m, dec: string | undefined, hex: string | undefined, name: string | undefined) => {
-    if (dec !== undefined) return decodeCodePoint(parseInt(dec, 10)) ?? m;
-    if (hex !== undefined) return decodeCodePoint(parseInt(hex, 16)) ?? m;
+    if (dec !== undefined) return decodeCodePoint(parseInt(dec, 10));
+    if (hex !== undefined) return decodeCodePoint(parseInt(hex, 16));
     return name !== undefined ? (NAMED_ENTITIES[name] ?? m) : m;
   });
 }
 
-function decodeCodePoint(cp: number): string | undefined {
-  if (!Number.isInteger(cp) || cp < 0 || cp > 0x10ffff) return undefined;
-  if (cp >= 0xd800 && cp <= 0xdfff) return undefined;
-  try {
-    return String.fromCodePoint(cp);
-  } catch {
-    return undefined;
-  }
+/**
+ * XML 1.0 §2.2 Char: a reference to NUL, a C0 control other than
+ * tab/LF/CR, a surrogate, U+FFFE/U+FFFF, or anything past U+10FFFF is
+ * not a character. It becomes U+FFFD so the AST never holds a code point
+ * the writer cannot re-serialize, and the reference itself never turns
+ * into visible text on round-trip (F-PENT-CHAR).
+ */
+function decodeCodePoint(cp: number): string {
+  if (!Number.isInteger(cp) || cp < 0 || cp > 0x10ffff) return '\uFFFD';
+  if (cp >= 0xd800 && cp <= 0xdfff) return '\uFFFD';
+  if (cp < 0x20 && cp !== 0x09 && cp !== 0x0a && cp !== 0x0d) return '\uFFFD';
+  if (cp === 0xfffe || cp === 0xffff) return '\uFFFD';
+  return String.fromCodePoint(cp);
+}
+
+/**
+ * Escapes text for either element content or a quoted attribute: all
+ * five XML predefined entities. One escaper for every emitter that
+ * builds markup from strings (WML/OPC serializers, HTML, SVG) so
+ * coverage cannot drift between copies. The node serializer below keeps
+ * its own minimal text/attribute escapers on purpose: it is lossless and
+ * must reproduce the source infoset byte for byte.
+ */
+export function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/**
+ * ST_OnOff attribute value (ISO/IEC 29500-1 §22.9.2.7): `1`, `true`, `on`
+ * are true; `0`, `false`, `off` are false. Absent or invalid values
+ * (including the empty string) return undefined so the caller applies the
+ * schema default. One reading for every on/off attribute.
+ */
+export function parseOnOff(value: string | undefined): boolean | undefined {
+  if (value === undefined) return undefined;
+  const v = value.trim().toLowerCase();
+  if (v === '1' || v === 'true' || v === 'on') return true;
+  if (v === '0' || v === 'false' || v === 'off') return false;
+  return undefined;
 }
 
 function escapeXmlText(text: string): string {

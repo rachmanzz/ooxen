@@ -1,7 +1,7 @@
 import type { BlockNode, TableCellNode, TableNode, TableRowNode } from '../../types/ast.js';
 import { twipsToPt } from '../../types/common.js';
 import type { TableCellStyle, TableStyle } from '../../types/style.js';
-import type { XmlNode } from '../xml-adapter.js';
+import { localName, type XmlNode } from '../xml-adapter.js';
 import type { NumberingResolver } from './numbering-resolver.js';
 import { defaultParagraphParser, type ParagraphParser } from './paragraph-parser.js';
 import { parseSdtContentBlocks } from './sdt-parser.js';
@@ -30,7 +30,7 @@ export class StandardTableParser implements TableParser {
     const rows: TableRowNode[] = [];
 
     for (const child of node.children) {
-      const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+      const tag = localName(child.nodeName);
       if (tag === 'tblpr') {
         style = parseTablePropertiesNode(child);
         const styleRef = child.children.find((c) => c.nodeName.toLowerCase().endsWith('tblstyle'));
@@ -64,7 +64,7 @@ export class StandardTableParser implements TableParser {
   private parseTableGrid(node: XmlNode): number[] {
     const cols: number[] = [];
     for (const child of node.children) {
-      const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+      const tag = localName(child.nodeName);
       if (tag === 'gridcol') {
         const wVal = Number(child.attributes['w:w'] ?? child.attributes['w']);
         if (!Number.isNaN(wVal)) {
@@ -82,10 +82,10 @@ export class StandardTableParser implements TableParser {
     let tblHeader: boolean | undefined;
 
     for (const child of node.children) {
-      const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+      const tag = localName(child.nodeName);
       if (tag === 'trpr') {
         for (const trChild of child.children) {
-          const trTag = trChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+          const trTag = localName(trChild.nodeName);
           if (trTag === 'trheight') {
             const hVal = Number(trChild.attributes['w:val'] ?? trChild.attributes['val']);
             if (!Number.isNaN(hVal)) {
@@ -167,7 +167,7 @@ export class StandardTableParser implements TableParser {
     const children: BlockNode[] = [];
 
     for (const child of node.children) {
-      const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+      const tag = localName(child.nodeName);
 
       if (tag === 'tcpr') {
         const parsedPr = this.parseCellProperties(child);
@@ -219,7 +219,7 @@ export class StandardTableParser implements TableParser {
     let vMerge: 'restart' | 'continue' | undefined;
 
     for (const child of node.children) {
-      const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+      const tag = localName(child.nodeName);
 
       if (tag === 'tcw') {
         const wVal = Number(child.attributes['w:w'] ?? child.attributes['w']);
@@ -246,7 +246,7 @@ export class StandardTableParser implements TableParser {
         }
       } else if (tag === 'tcborders') {
         for (const borderChild of child.children) {
-          const bTag = borderChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+          const bTag = localName(borderChild.nodeName);
           const bVal = borderChild.attributes['w:val'] ?? borderChild.attributes['val'];
           const bColor = borderChild.attributes['w:color'] ?? borderChild.attributes['color'];
           const borderDef = formatBorderDef(bVal, bColor, borderChild.attributes['w:sz'] ?? borderChild.attributes['sz']);
@@ -258,7 +258,7 @@ export class StandardTableParser implements TableParser {
         }
       } else if (tag === 'tcmar') {
         for (const mChild of child.children) {
-          const mTag = mChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+          const mTag = localName(mChild.nodeName);
           const wVal = Number(mChild.attributes['w:w'] ?? mChild.attributes['w']);
           if (!Number.isNaN(wVal)) {
             const pt = twipsToPt(wVal);

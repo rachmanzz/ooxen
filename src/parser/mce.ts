@@ -8,7 +8,7 @@
  * parsers see the resolved tree as if the wrapper never existed.
  */
 
-import type { XmlNode } from './xml-adapter.js';
+import { localName, type XmlNode } from './xml-adapter.js';
 
 export const MCE_NAMESPACE = 'http://schemas.openxmlformats.org/markup-compatibility/2006';
 
@@ -32,10 +32,6 @@ export const SUPPORTED_MARKUP_NAMESPACES: readonly string[] = [
   'http://schemas.openxmlformats.org/officeDocument/2006/math', // m
   'urn:schemas-microsoft-com:vml', // v
 ];
-
-function localName(nodeName: string): string {
-  return nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
-}
 
 function isMceElement(node: XmlNode, nsByPrefix: Map<string, string>, local: string): boolean {
   const colonIndex = node.nodeName.indexOf(':');

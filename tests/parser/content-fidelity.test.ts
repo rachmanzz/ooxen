@@ -121,4 +121,56 @@ describe('Content fidelity (F-PSDT-RUN, F-PMATH, F-PENT-REF, F-PLINK-PART)', () 
     expect(urls).toContain('https://header.example/');
     expect(urls).not.toContain('https://doc.example/');
   });
+
+  it('replaces references to non-XML characters with U+FFFD (F-PENT-CHAR)', () => {
+    // XML 1.0 §2.2: NUL, other C0 controls, surrogates, and U+FFFE/U+FFFF
+    // are not characters. Decoding them would put bytes in the AST the
+    // writer cannot re-serialize; leaving them literal would turn the
+    // reference into visible text on round-trip. Tab, LF, CR decode.
+    expect(defaultXmlAdapter.parse(`<w:t ${W}>a&#0;b</w:t>`).textContent).toBe('a\uFFFDb');
+    expect(defaultXmlAdapter.parse(`<w:t ${W}>a&#x1;b</w:t>`).textContent).toBe('a\uFFFDb');
+    expect(defaultXmlAdapter.parse(`<w:t ${W}>a&#xFFFE;b</w:t>`).textContent).toBe('a\uFFFDb');
+    expect(defaultXmlAdapter.parse(`<w:t ${W}>a&#xD800;b</w:t>`).textContent).toBe('a\uFFFDb');
+    expect(defaultXmlAdapter.parse(`<w:t ${W}>a&#1114112;b</w:t>`).textContent).toBe('a\uFFFDb');
+    expect(defaultXmlAdapter.parse(`<w:t ${W}>a&#9;b&#10;c</w:t>`).textContent).toBe('a\tb\nc');
+    expect(defaultXmlAdapter.parse(`<w:t ${W}>&#x1F600;</w:t>`).textContent).toBe('\u{1F600}');
+  });
+
+  it('reads word/theme/theme1.xml so heading runs get the major theme face and size', () => {
+    const enc = new TextEncoder();
+    const pkg = createPackage();
+    pkg.addRelationship(undefined, { id: 'rId1', type: KNOWN_RELATIONSHIPS.DOCUMENT, target: 'word/document.xml' });
+    pkg.setPart({
+      name: 'word/document.xml',
+      contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml',
+      data: enc.encode(`<w:document ${W} ${R}><w:body>` +
+        `<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Title</w:t></w:r></w:p>` +
+        `<w:p><w:r><w:t>Body</w:t></w:r></w:p>` +
+        `</w:body></w:document>`),
+    });
+    pkg.addRelationship('word/document.xml', { id: 'rIdS', type: KNOWN_RELATIONSHIPS.STYLES, target: 'styles.xml' });
+    pkg.setPart({
+      name: 'word/styles.xml',
+      contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml',
+      data: enc.encode(`<w:styles ${W}>` +
+        `<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:asciiTheme="minorHAnsi"/><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults>` +
+        `<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>` +
+        `<w:style w:type="paragraph" w:styleId="Heading1"><w:basedOn w:val="Normal"/>` +
+        `<w:rPr><w:rFonts w:asciiTheme="majorHAnsi"/><w:sz w:val="32"/></w:rPr></w:style>` +
+        `</w:styles>`),
+    });
+    pkg.addRelationship('word/document.xml', { id: 'rIdT', type: KNOWN_RELATIONSHIPS.THEME, target: 'theme/theme1.xml' });
+    pkg.setPart({
+      name: 'word/theme/theme1.xml',
+      contentType: 'application/vnd.openxmlformats-officedocument.theme+xml',
+      data: enc.encode(`<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:themeElements><a:fontScheme name="Office">` +
+        `<a:majorFont><a:latin typeface="Calibri Light"/></a:majorFont><a:minorFont><a:latin typeface="Calibri"/></a:minorFont>` +
+        `</a:fontScheme></a:themeElements></a:theme>`),
+    });
+    const doc = parsePackage(pkg);
+    const [heading, body] = doc.sections[0]!.children;
+    if (heading?.type !== 'paragraph' || body?.type !== 'paragraph') throw new Error('paragraphs expected');
+    expect(heading.children[0]!.style).toMatchObject({ fontFamily: 'Calibri Light', fontSizePt: 16 });
+    expect(body.children[0]!.style).toMatchObject({ fontFamily: 'Calibri', fontSizePt: 11 });
+  });
 });

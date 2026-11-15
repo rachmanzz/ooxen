@@ -310,4 +310,78 @@ describe('DrawingML & Vector Shape Parser', () => {
     expect(shape?.commands[0]).toEqual({ type: 'moveTo', points: [0, 72] });
     expect(shape?.commands[1]).toEqual({ type: 'lineTo', points: [72, 0] });
   });
+
+  it('treats prst="line" and zero-height bent/curved connectors as lines, not 100pt boxes (F-CONNECTOR)', () => {
+    for (const prst of ['line', 'bentConnector3', 'curvedConnector2']) {
+      const xml = `
+        <w:drawing xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                   xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                   xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                   xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+          <wp:anchor>
+            <wp:extent cx="2540000" cy="0"/>
+            <wp:docPr id="7" name=""/>
+            <a:graphic>
+              <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                <wps:wsp>
+                  <wps:spPr>
+                    <a:xfrm><a:off x="0" y="0"/><a:ext cx="2540000" cy="0"/></a:xfrm>
+                    <a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom>
+                    <a:ln w="19050"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln>
+                  </wps:spPr>
+                </wps:wsp>
+              </a:graphicData>
+            </a:graphic>
+          </wp:anchor>
+        </w:drawing>
+      `;
+      const shape = parseDrawingNode(defaultXmlAdapter.parse(xml));
+      expect(shape?.heightPt).toBeCloseTo(1.5, 5);
+      expect(shape?.widthPt).toBeCloseTo(200, 3);
+      expect(shape?.commands[1]).toEqual({ type: 'lineTo', points: [200, 0] });
+    }
+  });
+
+  it('draws bent and curved connectors with a real box as elbows and curves, not diagonals (F-CONNECTOR)', () => {
+    const connectorXml = (prst: string): string => `
+      <w:drawing xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                 xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                 xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                 xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+        <wp:anchor>
+          <wp:extent cx="2540000" cy="1270000"/>
+          <wp:docPr id="8" name=""/>
+          <a:graphic>
+            <a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+              <wps:wsp>
+                <wps:spPr>
+                  <a:xfrm><a:off x="0" y="0"/><a:ext cx="2540000" cy="1270000"/></a:xfrm>
+                  <a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom>
+                  <a:ln w="12700"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln>
+                </wps:spPr>
+              </wps:wsp>
+            </a:graphicData>
+          </a:graphic>
+        </wp:anchor>
+      </w:drawing>
+    `;
+    const elbow = parseDrawingNode(defaultXmlAdapter.parse(connectorXml('bentConnector3')));
+    expect(elbow?.widthPt).toBeCloseTo(200, 3);
+    expect(elbow?.heightPt).toBeCloseTo(100, 3);
+    expect(elbow?.commands).toEqual([
+      { type: 'moveTo', points: [0, 0] },
+      { type: 'lineTo', points: [100, 0] },
+      { type: 'lineTo', points: [100, 100] },
+      { type: 'lineTo', points: [200, 100] },
+    ]);
+    const single = parseDrawingNode(defaultXmlAdapter.parse(connectorXml('bentConnector2')));
+    expect(single?.commands).toEqual([
+      { type: 'moveTo', points: [0, 0] },
+      { type: 'lineTo', points: [200, 0] },
+      { type: 'lineTo', points: [200, 100] },
+    ]);
+    const curve = parseDrawingNode(defaultXmlAdapter.parse(connectorXml('curvedConnector3')));
+    expect(curve?.commands[1]?.type).toBe('cubicBezTo');
+    expect(curve?.commands[1]?.points).toEqual([100, 0, 100, 100, 200, 100]);
+  });
 });

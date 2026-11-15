@@ -56,6 +56,38 @@ describe('Image & Binary Media Parser', () => {
     expect(node?.anchor?.behindDoc).toBe(false);
   });
 
+  it('reads behindDoc and layoutInCell as ST_OnOff with schema defaults for invalid values', () => {
+    const anchorXml = (attrs: string): string => `
+      <w:drawing xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                 xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                 xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                 xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"
+                 xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+        <wp:anchor ${attrs}>
+          <wp:extent cx="1905000" cy="1270000"/>
+          <wp:docPr id="11" name="Float.png"/>
+          <a:graphic>
+            <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+              <pic:pic>
+                <pic:nvPicPr><pic:cNvPr id="0" name="Float.png"/></pic:nvPicPr>
+                <pic:blipFill><a:blip r:embed="rId9"/></pic:blipFill>
+              </pic:pic>
+            </a:graphicData>
+          </a:graphic>
+        </wp:anchor>
+      </w:drawing>`;
+    const anchorOf = (attrs: string) => parseImageNode(defaultXmlAdapter.parse(anchorXml(attrs)), { resolveImage: () => undefined })?.anchor;
+    // Keyword spellings count for both flags.
+    expect(anchorOf('behindDoc="true" layoutInCell="off"')?.behindDoc).toBe(true);
+    expect(anchorOf('behindDoc="true" layoutInCell="off"')?.layoutInCell).toBe(false);
+    expect(anchorOf('behindDoc="on" layoutInCell="1"')?.layoutInCell).toBe(true);
+    // Empty or invalid values fall back to the schema default on both.
+    expect(anchorOf('behindDoc="" layoutInCell=""')?.behindDoc).toBe(false);
+    expect(anchorOf('behindDoc="" layoutInCell=""')?.layoutInCell).toBeUndefined();
+    expect(anchorOf('behindDoc="yes" layoutInCell="no"')?.behindDoc).toBe(false);
+    expect(anchorOf('behindDoc="yes" layoutInCell="no"')?.layoutInCell).toBeUndefined();
+  });
+
   it('should leave inline images without an anchor', () => {
     const xml = `
       <w:drawing xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"

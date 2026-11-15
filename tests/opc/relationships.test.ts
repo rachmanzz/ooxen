@@ -38,6 +38,10 @@ describe('OPC Relationships', () => {
     const parsed = parseRelationships(xml);
     expect(parsed.length).toBe(2);
     expect(parsed[0]?.id).toBe('rId1');
+    // Shared escaper: apostrophes in targets survive the round trip.
+    const quoted = serializeRelationships([{ id: 'rId3', type: KNOWN_RELATIONSHIPS.STYLES, target: "it's.xml" }]);
+    expect(quoted).toContain('Target="it&apos;s.xml"');
+    expect(parseRelationships(quoted)[0]?.target).toBe("it's.xml");
     expect(parsed[0]?.target).toBe('word/document.xml');
     expect(parsed[1]?.id).toBe('rId2');
     expect(parsed[1]?.target).toBe('styles.xml');

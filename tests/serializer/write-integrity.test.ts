@@ -277,4 +277,17 @@ describe('Write integrity for notes and part-local media (F-WIMG-HDR, F-WNOTE-SC
     const docImageRels = pkg.getRelationships('word/document.xml').filter((r) => r.type.endsWith('/image'));
     expect(docImageRels.length).toBe(1);
   });
+
+  it('round-trips layoutInCell="0" on floating anchors (F-TBXFLOAT)', async () => {
+    const image = dataImage({
+      anchor: { horizontalFrom: 'page', horizontalOffsetPt: 0, horizontalAlign: 'right', verticalFrom: 'paragraph', verticalOffsetPt: 0, layoutInCell: false },
+    });
+    const bytes = await new StandardOoxenWriter().write(docWith([baseSection([paraWithImage(image)])]));
+    const xml = await partText(bytes, 'word/document.xml');
+    expect(xml).toMatch(/<wp:anchor [^>]*layoutInCell="0"/);
+    const reparsed = await openDocument(bytes);
+    const para = reparsed.sections[0]!.children[0]!;
+    const anchor = para.type === 'paragraph' ? para.children[0]?.image?.anchor : undefined;
+    expect(anchor?.layoutInCell).toBe(false);
+  });
 });

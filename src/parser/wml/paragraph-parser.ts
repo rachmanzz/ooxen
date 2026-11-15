@@ -12,7 +12,7 @@ import type {
 } from '../../types/ast.js';
 import { parseImageNode, type ImageResolver } from '../dml/image-parser.js';
 import { parseDrawingNode, parseTextboxBlocks } from '../dml/shape-parser.js';
-import type { XmlNode } from '../xml-adapter.js';
+import { localName, type XmlNode } from '../xml-adapter.js';
 import type { NumberingResolver } from './numbering-resolver.js';
 import { parseParagraphProperties, parseRunProperties, type StyleResolver } from './style-resolver.js';
 
@@ -59,7 +59,13 @@ export interface ParagraphParser {
     imageResolver?: ImageResolver,
     hyperlinkResolver?: HyperlinkResolver,
   ): ParagraphNode;
-  parseRun(node: XmlNode, inheritedStyle?: StyleResolver, imageResolver?: ImageResolver): RunNode;
+  /**
+   * `paragraphStyleId` is the host paragraph's `w:pStyle`; run text
+   * inherits that style's run properties beneath its own character style
+   * and direct formatting (§17.7.2). Absent, the default paragraph style
+   * applies.
+   */
+  parseRun(node: XmlNode, inheritedStyle?: StyleResolver, imageResolver?: ImageResolver, paragraphStyleId?: string): RunNode;
   /**
    * Drains shape-textbox paragraphs discovered while parsing the last
    * paragraph. Callers that own a block list (document, header/footer,
@@ -74,6 +80,8 @@ export interface ParagraphParser {
 /** Mutable state threaded through inline-child parsing of one paragraph. */
 interface InlineParseState {
   runs: RunNode[];
+  /** `w:pStyle` of the paragraph being parsed, for run style inheritance. */
+  paragraphStyleId?: string;
   /** First bookmark opened in the paragraph (becomes the paragraph id). */
   bookmarkName?: string;
   activeBookmark?: string;
@@ -107,7 +115,7 @@ export class StandardParagraphParser implements ParagraphParser {
    */
   private isFloatingDrawing(drawingNode: XmlNode): boolean {
     for (const node of drawingNode.children) {
-      const tag = node.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+      const tag = localName(node.nodeName);
       if (tag === 'anchor') return true;
       if (tag === 'inline') return false;
     }
@@ -180,13 +188,14 @@ export class StandardParagraphParser implements ParagraphParser {
     const state: InlineParseState = { runs: [] };
 
     for (const child of node.children) {
-      const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+      const tag = localName(child.nodeName);
 
       if (tag === 'ppr') {
         directPPrNode = child;
         const pStyle = child.children.find((c) => c.nodeName.toLowerCase().endsWith('pstyle'));
         if (pStyle) {
           styleId = pStyle.attributes['w:val'] ?? pStyle.attributes['val'];
+          state.paragraphStyleId = styleId;
         }
       } else {
         this.parseInlineChild(child, tag, state, styleResolver, imageResolver, hyperlinkResolver);
@@ -205,9 +214,9 @@ export class StandardParagraphParser implements ParagraphParser {
     // the same way a Title-styled empty line is 26pt tall in Word.
     if (combinedStyle.markFontSizePt === undefined) {
       const markRPr = directPPrNode?.children.find(
-        (c) => c.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase() === 'rpr',
+        (c) => localName(c.nodeName) === 'rpr',
       );
-      const directSize = markRPr ? parseRunProperties(markRPr).fontSizePt : undefined;
+      const directSize = markRPr ? parseRunProperties(markRPr, styleResolver?.getThemeFonts?.()).fontSizePt : undefined;
       const inheritedSize = styleResolver?.resolveRunStyle(styleId).fontSizePt;
       const markSize = directSize ?? inheritedSize;
       if (markSize !== undefined) combinedStyle.markFontSizePt = markSize;
@@ -227,17 +236,22 @@ export class StandardParagraphParser implements ParagraphParser {
           prefixFontFamily: resolved.prefixFontFamily,
           prefixFontSizePt: resolved.prefixFontSizePt,
         };
-        if (resolved.indentLeftPt !== undefined && combinedStyle.indentLeftPt === undefined) {
+        // Style chain < numbering level < direct formatting (§17.3.1.12):
+        // the level's indents override the style's but yield to a w:ind
+        // on the paragraph itself.
+        if (resolved.indentLeftPt !== undefined && directStyle.indentLeftPt === undefined) {
           combinedStyle.indentLeftPt = resolved.indentLeftPt;
         }
-        if (resolved.hangingPt !== undefined && combinedStyle.firstLineIndentPt === undefined) {
-          combinedStyle.firstLineIndentPt = -resolved.hangingPt;
+        const levelFirstLine = resolved.firstLineIndentPt ?? (resolved.hangingPt !== undefined ? -resolved.hangingPt : undefined);
+        if (levelFirstLine !== undefined && directStyle.firstLineIndentPt === undefined) {
+          combinedStyle.firstLineIndentPt = levelFirstLine;
         }
       }
     }
 
     return {
       type: 'paragraph',
+      styleId,
       style: Object.keys(combinedStyle).length > 0 ? combinedStyle : undefined,
       bookmarkName,
       children: runs,
@@ -290,9 +304,9 @@ export class StandardParagraphParser implements ParagraphParser {
         };
 
         for (const rChild of child.children) {
-          const rTag = rChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+          const rTag = localName(rChild.nodeName);
           if (rTag === 'r') {
-            const r = this.parseRun(rChild, styleResolver, imageResolver);
+            const r = this.parseRun(rChild, styleResolver, imageResolver, state.paragraphStyleId);
             r.revision = revInfo;
             if (state.activeBookmark && !r.bookmarkName) r.bookmarkName = state.activeBookmark;
             if (state.activeCommentId && !r.commentId) r.commentId = state.activeCommentId;
@@ -311,9 +325,9 @@ export class StandardParagraphParser implements ParagraphParser {
         };
 
         for (const hChild of child.children) {
-          const hTag = hChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+          const hTag = localName(hChild.nodeName);
           if (hTag === 'r') {
-            const r = this.parseRun(hChild, styleResolver, imageResolver);
+            const r = this.parseRun(hChild, styleResolver, imageResolver, state.paragraphStyleId);
             r.hyperlink = hyperlinkInfo;
             if (state.activeBookmark && !r.bookmarkName) r.bookmarkName = state.activeBookmark;
             if (state.activeCommentId && !r.commentId) r.commentId = state.activeCommentId;
@@ -325,8 +339,8 @@ export class StandardParagraphParser implements ParagraphParser {
             const instr = (hChild.attributes['w:instr'] ?? hChild.attributes['instr'] ?? '').trim();
             const fieldType = classifyFieldInstruction(instr);
             for (const fChild of hChild.children) {
-              if (fChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase() === 'r') {
-                const r = this.parseRun(fChild, styleResolver, imageResolver);
+              if (localName(fChild.nodeName) === 'r') {
+                const r = this.parseRun(fChild, styleResolver, imageResolver, state.paragraphStyleId);
                 r.field = fieldType;
                 r.hyperlink = hyperlinkInfo;
                 if (state.activeBookmark && !r.bookmarkName) r.bookmarkName = state.activeBookmark;
@@ -340,7 +354,7 @@ export class StandardParagraphParser implements ParagraphParser {
           }
         }
       } else if (tag === 'r') {
-        const r = this.parseRun(child, styleResolver, imageResolver);
+        const r = this.parseRun(child, styleResolver, imageResolver, state.paragraphStyleId);
         if (state.activeBookmark && !r.bookmarkName) r.bookmarkName = state.activeBookmark;
         if (state.activeCommentId && !r.commentId) r.commentId = state.activeCommentId;
         const isPureCommentRef = r.commentId && !r.text && !r.drawing && !r.image && !r.footnoteRef && !r.field;
@@ -362,8 +376,8 @@ export class StandardParagraphParser implements ParagraphParser {
         const instr = (child.attributes['w:instr'] ?? child.attributes['instr'] ?? '').trim();
         const fieldType = classifyFieldInstruction(instr);
         for (const fChild of child.children) {
-          if (fChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase() === 'r') {
-            const r = this.parseRun(fChild, styleResolver, imageResolver);
+          if (localName(fChild.nodeName) === 'r') {
+            const r = this.parseRun(fChild, styleResolver, imageResolver, state.paragraphStyleId);
             r.field = fieldType;
             if (state.activeBookmark && !r.bookmarkName) r.bookmarkName = state.activeBookmark;
             if (state.activeCommentId && !r.commentId) r.commentId = state.activeCommentId;
@@ -407,10 +421,10 @@ export class StandardParagraphParser implements ParagraphParser {
     hyperlinkResolver?: HyperlinkResolver,
   ): void {
     const content = node.children.find(
-      (c) => c.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase() === 'sdtcontent',
+      (c) => localName(c.nodeName) === 'sdtcontent',
     );
     for (const iChild of content?.children ?? []) {
-      const iTag = iChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+      const iTag = localName(iChild.nodeName);
       this.parseInlineChild(iChild, iTag, state, styleResolver, imageResolver, hyperlinkResolver);
     }
   }
@@ -423,7 +437,7 @@ export class StandardParagraphParser implements ParagraphParser {
         out += child.textContent ?? '';
         continue;
       }
-      const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+      const tag = localName(child.nodeName);
       if (tag === 't') {
         out += child.textContent ?? '';
       } else {
@@ -433,7 +447,7 @@ export class StandardParagraphParser implements ParagraphParser {
     return out;
   }
 
-  parseRun(node: XmlNode, styleResolver?: StyleResolver, imageResolver?: ImageResolver): RunNode {
+  parseRun(node: XmlNode, styleResolver?: StyleResolver, imageResolver?: ImageResolver, paragraphStyleId?: string): RunNode {
     let directRPrNode: XmlNode | undefined;
     let rStyleId: string | undefined;
     let text = '';
@@ -456,7 +470,7 @@ export class StandardParagraphParser implements ParagraphParser {
 
     for (const child of node.childNodes ?? node.children) {
       if (child.kind && child.kind !== 'element') continue;
-      const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+      const tag = localName(child.nodeName);
 
       if (tag === 'rpr') {
         directRPrNode = child;
@@ -519,8 +533,15 @@ export class StandardParagraphParser implements ParagraphParser {
       }
     }
 
-    const baseStyle = styleResolver?.resolveRunStyle(rStyleId) ?? {};
-    const directStyle = parseRunProperties(directRPrNode);
+    // Document defaults → paragraph style chain → character style chain →
+    // direct formatting (§17.7.2). Resolvers without the paragraph-aware
+    // method fall back to the character style chain alone.
+    const baseStyle = styleResolver
+      ? styleResolver.resolveRunStyleInParagraph
+        ? styleResolver.resolveRunStyleInParagraph(paragraphStyleId, rStyleId)
+        : styleResolver.resolveRunStyle(rStyleId)
+      : {};
+    const directStyle = parseRunProperties(directRPrNode, styleResolver?.getThemeFonts?.());
     const combinedStyle = { ...baseStyle, ...directStyle };
 
     return {
