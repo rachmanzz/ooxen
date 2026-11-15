@@ -223,4 +223,15 @@ describe('WMF equation preview', () => {
     const base = parseWmfPreview(new Uint8Array([...header, ...u32(4), ...u16(0x012e), ...u16(0x18), ...text]))!;
     expect(base.texts[0]!.y).toBeCloseTo(5, 5);
   });
+
+  it('escapes the font face name in the SVG font-family attribute (F-WMFEQ)', () => {
+    const bytes = tinyWmf();
+    // LOGFONT lfFaceName starts after the 22-byte placeable header, the
+    // 6-byte record header, and the 18 fixed LOGFONT bytes.
+    const face = ascii('Bad"<Face\0');
+    bytes.set(face, 46);
+    const svg = convertWmfToSvg(bytes);
+    expect(svg).toContain('font-family="&apos;Bad&quot;&lt;Face&apos;, serif"');
+    expect(svg).not.toContain('Bad"<');
+  });
 });

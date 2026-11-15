@@ -37,6 +37,7 @@ const EXPECTED_SELECTORS = [
   '.ooxen-del',
   '.ooxen-page-break',
   '.ooxen-column-break',
+  '.ooxen-float-host',
 ];
 
 describe('Ooxen built-in CSS', () => {

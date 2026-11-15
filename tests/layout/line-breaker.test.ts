@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { StandardLineBreaker } from '../../src/layout/line-breaker.js';
 import { FontMetricsRegistry } from '../../src/fonts/font-metrics-registry.js';
-import { SimpleTextMetricsMeasurer } from '../../src/layout/text-metrics.js';
+import { SimpleTextMetricsMeasurer, measureTextWidth } from '../../src/layout/text-metrics.js';
 import type { ParagraphNode } from '../../src/types/ast.js';
 import type { TabStopAlignment } from '../../src/types/style.js';
 
@@ -83,17 +83,72 @@ describe('Layout Line Breaker', () => {
     expect(lines[0]?.fragments.some((f) => f.isTab)).toBe(true);
   });
 
-  it('should keep a tab that starts a wrapped continuation line', () => {
-    // Narrow width pushes the tab off line 1: only paragraph-initial tabs
-    // collapse, wrapped-line tabs survive (pendirian-pt leader rows).
+  it('runs a tab that overshoots the line end to the end of its line and wraps the text after it (F-TABEND)', () => {
+    // Narrow width: the tab after "aaaaa" cannot reach its stop. Word keeps
+    // it on the line (a leader row in a deed ends on the text's own line)
+    // and wraps only "b".
     const paragraph: ParagraphNode = {
       type: 'paragraph',
       children: [{ type: 'run', text: 'aaaaa\tb' }],
     };
 
     const lines = lineBreaker.breakParagraph(paragraph, 30);
-    expect(lines.length).toBe(3);
-    expect(lines[1]?.fragments.some((f) => f.isTab)).toBe(true);
+    expect(lines.length).toBe(2);
+    const tab = lines[0]!.fragments.find((f) => f.isTab)!;
+    expect(tab).toBeDefined();
+    expect(tab.bounds.x + tab.bounds.width).toBeCloseTo(30, 5);
+    expect(lines[1]!.fragments.map((f) => f.text).join('')).toBe('b');
+  });
+
+  it('places tabs on the document tab grid and on the hanging indent (F-TABHANG)', () => {
+    // Default grid from w:defaultTabStop (0.8cm = 22.7pt here) instead of 36pt.
+    const grid = lineBreaker.breakParagraph({ type: 'paragraph', children: [{ type: 'run', text: '\tX' }] }, 400, { defaultTabStopPt: 22.7 });
+    expect(grid[0]!.fragments.find((f) => f.isTab)!.bounds.width).toBeCloseTo(22.7, 5);
+    // A hanging indent is an implicit stop for the first line: "-<tab>text"
+    // lands the text on the indent even without custom stops...
+    const hanging = lineBreaker.breakParagraph(
+      { type: 'paragraph', style: { indentLeftPt: 30, firstLineIndentPt: -30 }, children: [{ type: 'run', text: '-\tText' }] },
+      400,
+    );
+    const text = hanging[0]!.fragments.find((f) => f.text === 'Text')!;
+    expect(hanging[0]!.bounds.x + text.bounds.x).toBeCloseTo(30, 5);
+    // ...and a nearer custom stop still wins.
+    const custom = lineBreaker.breakParagraph(
+      {
+        type: 'paragraph',
+        style: { indentLeftPt: 30, firstLineIndentPt: -30, tabStops: [{ positionPt: 20, alignment: 'left', leader: 'none' }] },
+        children: [{ type: 'run', text: '-\tText' }],
+      },
+      400,
+    );
+    const customText = custom[0]!.fragments.find((f) => f.text === 'Text')!;
+    expect(custom[0]!.bounds.x + customText.bounds.x).toBeCloseTo(20, 5);
+  });
+
+  it('keeps a trailing right-stop leader tab on the line that reaches the margin exactly', () => {
+    // Courier New 12pt is a fixed 7.2pt advance: 10 characters = 72pt. The
+    // right stop sits at the line end (200); the tab must fill 72 → 200 on
+    // the same line rather than dropping to a line of its own.
+    const lines = lineBreaker.breakParagraph(
+      {
+        type: 'paragraph',
+        style: { tabStops: [{ positionPt: 200, alignment: 'right', leader: 'dot' }] },
+        children: [{ type: 'run', text: 'ABCDEFGHIJ\t', style: { fontFamily: 'Courier New', fontSizePt: 12 } }],
+      },
+      200,
+    );
+    expect(lines.length).toBe(1);
+    const tab = lines[0]!.fragments.find((f) => f.isTab)!;
+    expect(tab.bounds.x).toBeCloseTo(72, 5);
+    expect(tab.bounds.width).toBeCloseTo(128, 5);
+    expect(tab.tabLeader).toBe('dot');
+  });
+
+  it('measures monospace faces with one fixed advance, bold included', () => {
+    const measurer = new SimpleTextMetricsMeasurer(new FontMetricsRegistry());
+    expect(measurer.measureText('AKTA', { fontFamily: 'Courier New', fontSizePt: 12 }).width).toBeCloseTo(28.8, 5);
+    expect(measurer.measureText('AKTA', { fontFamily: 'Courier New', fontSizePt: 12, bold: true }).width).toBeCloseTo(28.8, 5);
+    expect(measureTextWidth('AKTA', 12, true, 'Courier New')).toBeCloseTo(28.8, 5);
   });
 
   it('should apply center and right alignment offsets', () => {

@@ -63,7 +63,12 @@ export class StandardStyleMapper implements StyleMapper {
     if (style.firstLineIndentPt) {
       css['text-indent'] = `${style.firstLineIndentPt}pt`;
     }
-    if (style.lineSpacingPt) {
+    if (style.lineSpacingRule === 'auto' || (style.lineSpacingRule === undefined && style.lineSpacingMultiple !== undefined)) {
+      // Auto spacing scales the font's own line box, so a unitless value
+      // (CSS "normal" is about 1.2) keeps large headings from overlapping.
+      css['line-height'] = `${Number((1.2 * (style.lineSpacingMultiple ?? 1)).toFixed(3))}`;
+    } else if (style.lineSpacingPt) {
+      // atLeast/exact/atMost: a fixed height is the closest CSS offers.
       css['line-height'] = `${style.lineSpacingPt}pt`;
     }
     if (style.pageBreakBefore) {

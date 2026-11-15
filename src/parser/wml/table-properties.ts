@@ -1,6 +1,6 @@
 import { twipsToPt } from '../../types/common.js';
 import type { TableStyle } from '../../types/style.js';
-import type { XmlNode } from '../xml-adapter.js';
+import { localName, type XmlNode } from '../xml-adapter.js';
 
 /**
  * Shared table-property parsing. Lives in its own module so that both the
@@ -32,7 +32,7 @@ export function parseTablePropertiesNode(node: XmlNode): TableStyle {
   const style: TableStyle = {};
 
   for (const child of node.children) {
-    const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+    const tag = localName(child.nodeName);
 
     if (tag === 'jc') {
       const val = (child.attributes['w:val'] ?? child.attributes['val'])?.toLowerCase();
@@ -51,7 +51,7 @@ export function parseTablePropertiesNode(node: XmlNode): TableStyle {
       }
     } else if (tag === 'tblborders') {
       for (const bChild of child.children) {
-        const bTag = bChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+        const bTag = localName(bChild.nodeName);
         const bVal = bChild.attributes['w:val'] ?? bChild.attributes['val'];
         const bColor = bChild.attributes['w:color'] ?? bChild.attributes['color'];
         const borderDef = formatBorderDef(bVal, bColor, bChild.attributes['w:sz'] ?? bChild.attributes['sz']);
@@ -65,7 +65,7 @@ export function parseTablePropertiesNode(node: XmlNode): TableStyle {
       }
     } else if (tag === 'tblcellmar') {
       for (const mChild of child.children) {
-        const mTag = mChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+        const mTag = localName(mChild.nodeName);
         const wVal = Number(mChild.attributes['w:w'] ?? mChild.attributes['w']);
         if (!Number.isNaN(wVal)) {
           const pt = twipsToPt(wVal);

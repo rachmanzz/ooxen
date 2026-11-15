@@ -2,6 +2,7 @@ import type {
   BlockNode,
   DocumentNode,
   DrawingShapeNode,
+  ImageAnchor,
   ImageNode,
   ParagraphNode,
   RunNode,
@@ -14,18 +15,15 @@ import type {
 import { uint8ArrayToBase64 } from '../../types/common.js';
 import { wmfPreviewDataUrl } from '../../parser/dml/wmf-preview.js';
 import { parseBorderStyle } from '../../layout/page-engine.js';
-import { defaultLineBreaker } from '../../layout/line-breaker.js';
-import type { ImageAnchor } from '../../types/ast.js';
+import { defaultLineBreaker, layoutTextboxLines } from '../../layout/line-breaker.js';
 import { defaultStyleMapper, type StyleMapper } from './style-mapper.js';
+import { escapeXml } from '../../parser/xml-adapter.js';
+import { hostDocumentBlockFloats } from '../../types/block-floats.js';
 
-function escapeXml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
+/** Class that makes an element the positioning context for its floats (F-HTMLFLOAT). */
+const FLOAT_HOST_CLASS = 'ooxen-has-float';
+/** Class for the empty host of a block-level float: reserves one line of flow, like Word's empty paragraph. */
+const FLOAT_BLOCK_HOST_CLASS = 'ooxen-float-host';
 
 /** OOXML border styles that have no direct CSS equivalent map to 'solid'. */
 const BORDER_STYLE_TO_CSS: Record<string, string> = {
@@ -93,11 +91,21 @@ function floatPlacement(anchor: ImageAnchor, widthPt: number, heightPt: number):
     hPos = `left: ${anchor.horizontalOffsetPt}pt;`;
   }
 
+  // Paragraph- and line-relative keywords pin to the paragraph top, as in
+  // the layout engine (the paragraph has no reference height while it is
+  // being laid out); page/margin keywords use the host box as the best
+  // reference HTML can offer. A numeric offset is always measured from
+  // the host paragraph, even for page/margin references: the HTML output
+  // is a continuous flow with no page box to measure from, so this is a
+  // documented approximation of the overlay model, not the engine's
+  // page-space placement (F-HTMLFLOAT).
   const alignV = anchor.verticalAlign?.toLowerCase();
+  const fromV = anchor.verticalFrom.toLowerCase();
+  const hostIsReference = fromV === 'page' || fromV === 'margin';
   let vPos: string;
-  if (alignV === 'center') {
+  if (alignV === 'center' && hostIsReference) {
     vPos = `top: calc(50% - ${heightPt / 2}pt);`;
-  } else if (alignV === 'bottom' || alignV === 'outside') {
+  } else if ((alignV === 'bottom' || alignV === 'outside') && hostIsReference) {
     vPos = 'bottom: 0;';
   } else if (alignV) {
     vPos = 'top: 0;';
@@ -120,38 +128,38 @@ export function renderShapeToSvg(shape: DrawingShapeNode): string {
   // and insets match the canvas output.
   let shapeText = '';
   if (shape.anchor && shape.textbox && shape.textbox.length > 0) {
-    const insetX = 91440 / 12700;
-    const insetY = 45720 / 12700;
-    const innerWidth = Math.max(10, shape.widthPt - insetX * 2);
+    const layout = layoutTextboxLines(defaultLineBreaker, shape.textbox, shape.widthPt);
     const parts: string[] = [];
-    let textY = 0;
-    for (const para of shape.textbox) {
-      let paraHeight = 0;
-      for (const line of defaultLineBreaker.breakParagraph(para, innerWidth)) {
-        const lineTop = insetY + textY + line.bounds.y;
-        // The breaker yields one fragment per word; adjacent fragments
-        // that share a run style merge back into one text element.
-        const groups: { x: number; text: string; style: typeof line.fragments[number]['style'] }[] = [];
-        for (const frag of line.fragments) {
-          if (frag.text.length === 0 || frag.isTab) continue;
-          const last = groups[groups.length - 1];
-          if (last && last.style === frag.style) last.text += frag.text;
-          else groups.push({ x: insetX + line.bounds.x + frag.bounds.x, text: frag.text, style: frag.style });
+    for (const line of layout.lines) {
+      const lineTop = layout.y + line.bounds.y;
+      // The breaker yields one fragment per word; adjacent fragments that
+      // share a run style merge back into one text element. A tab is not
+      // drawn, but it ends the group so the word after it keeps its
+      // tab-stop x instead of gluing onto the word before.
+      const groups: { x: number; text: string; style: typeof line.fragments[number]['style'] }[] = [];
+      let afterTab = false;
+      for (const frag of line.fragments) {
+        if (frag.isTab) {
+          afterTab = true;
+          continue;
         }
-        for (const group of groups) {
-          const size = group.style?.fontSizePt ?? 11;
-          const color = escapeXml(group.style?.color ?? '#000000');
-          const weight = group.style?.bold ? ' font-weight="bold"' : '';
-          const slant = group.style?.italic ? ' font-style="italic"' : '';
-          const family = group.style?.fontFamily ? ` font-family="${escapeXml(group.style.fontFamily)}"` : '';
-          const y = lineTop + line.baseline;
-          parts.push(
-            `<text x="${group.x.toFixed(2)}" y="${y.toFixed(2)}" font-size="${size}" fill="${color}"${family}${weight}${slant} xml:space="preserve">${escapeXml(group.text)}</text>`,
-          );
-        }
-        paraHeight += line.bounds.height;
+        if (frag.text.length === 0) continue;
+        const last = groups[groups.length - 1];
+        if (last && !afterTab && last.style === frag.style) last.text += frag.text;
+        else groups.push({ x: layout.x + line.bounds.x + frag.bounds.x, text: frag.text, style: frag.style });
+        afterTab = false;
       }
-      textY += paraHeight;
+      for (const group of groups) {
+        const size = group.style?.fontSizePt ?? 11;
+        const color = escapeXml(group.style?.color ?? '#000000');
+        const weight = group.style?.bold ? ' font-weight="bold"' : '';
+        const slant = group.style?.italic ? ' font-style="italic"' : '';
+        const family = group.style?.fontFamily ? ` font-family="${escapeXml(group.style.fontFamily)}"` : '';
+        const y = lineTop + line.baseline;
+        parts.push(
+          `<text x="${group.x.toFixed(2)}" y="${y.toFixed(2)}" font-size="${size}" fill="${color}"${family}${weight}${slant} xml:space="preserve">${escapeXml(group.text)}</text>`,
+        );
+      }
     }
     shapeText = parts.join('');
   }
@@ -205,7 +213,10 @@ export class StandardHtmlRenderer implements HtmlRenderer {
     this.styleMapper = styleMapper;
   }
 
-  renderToHtmlString(document: DocumentNode): string {
+  renderToHtmlString(input: DocumentNode): string {
+    // Block-level floats become their empty host paragraph once, here, as
+    // in the layout engine (F-HTMLFLOAT).
+    const document = hostDocumentBlockFloats(input);
     const sectionsHtml = document.sections.map((s) => this.renderSection(s)).join('\n');
 
     let footnotesHtml = '';
@@ -356,8 +367,14 @@ export class StandardHtmlRenderer implements HtmlRenderer {
       : '';
 
     const runsHtml = paragraph.children.map((run) => this.renderRun(run)).join('');
-    // A paragraph hosting floats becomes their positioning context.
-    const floatClass = paragraph.children.some((run) => run.image?.anchor || run.drawing?.anchor) ? ' ooxen-has-float' : '';
+    // A paragraph hosting floats becomes their positioning context. One
+    // that holds nothing but floats (Word's empty host paragraph, or a
+    // hosted block-level float) would collapse to zero height, so it also
+    // keeps the one empty line the layout engine gives it (F-HTMLFLOAT).
+    const hasFloat = paragraph.children.some((run) => run.image?.anchor || run.drawing?.anchor);
+    const onlyFloats =
+      hasFloat && paragraph.children.every((run) => run.text === '' && (run.image ? run.image.anchor : run.drawing ? run.drawing.anchor : true));
+    const floatClass = hasFloat ? ` ${FLOAT_HOST_CLASS}${onlyFloats ? ` ${FLOAT_BLOCK_HOST_CLASS}` : ''}` : '';
     return `    <p class="ooxen-p${floatClass}"${idAttr}${styleAttr}>${prefixHtml}${runsHtml}</p>`;
   }
 

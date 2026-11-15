@@ -1,5 +1,5 @@
 import type { ImageResolver } from '../dml/image-parser.js';
-import type { XmlNode } from '../xml-adapter.js';
+import { localName, type XmlNode } from '../xml-adapter.js';
 import type { NumberingResolver } from './numbering-resolver.js';
 import type { HyperlinkResolver, ParagraphParser } from './paragraph-parser.js';
 import type { StyleResolver } from './style-resolver.js';
@@ -22,13 +22,13 @@ export function parseSdtContentBlocks(
   tableParser: TableParser,
 ): BlockNode[] {
   const content = node.children.find((c) =>
-    c.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase() === 'sdtcontent',
+    localName(c.nodeName) === 'sdtcontent',
   );
   const scope = content ?? node;
   const blocks: BlockNode[] = [];
 
   for (const child of scope.children) {
-    const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+    const tag = localName(child.nodeName);
     if (tag === 'p') {
       blocks.push(
         paragraphParser.parseParagraph(child, styleResolver, numberingResolver, imageResolver, hyperlinkResolver),

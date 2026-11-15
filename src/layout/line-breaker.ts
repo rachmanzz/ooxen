@@ -50,8 +50,46 @@ export interface LayoutLine {
   breakType?: 'page' | 'column';
 }
 
+/** Tolerance for "fits on the line" checks, so a tab or word reaching the exact line end stays put. */
+const WIDTH_EPSILON = 0.01;
+
+/** Document-level inputs to line breaking. */
+export interface LineBreakOptions {
+  /** Default tab grid (`w:defaultTabStop`); 36pt when absent. */
+  defaultTabStopPt?: number;
+}
+
 export interface LineBreaker {
-  breakParagraph(paragraph: ParagraphNode, availableWidth: number): LayoutLine[];
+  breakParagraph(paragraph: ParagraphNode, availableWidth: number, options?: LineBreakOptions): LayoutLine[];
+}
+
+/**
+ * Lays textbox paragraphs out inside a shape frame using the DrawingML
+ * bodyPr default insets (91440/45720 EMU). Lines carry shape-relative y:
+ * each paragraph is shifted by the running height of the ones above it.
+ * Shared by the page engine and the HTML renderer so wrapping, alignment,
+ * and insets match across renderers (F-TBXFLOAT).
+ */
+export function layoutTextboxLines(
+  breaker: LineBreaker,
+  paragraphs: ParagraphNode[],
+  shapeWidthPt: number,
+): ShapeTextLayout {
+  const insetX = 91440 / 12700;
+  const insetY = 45720 / 12700;
+  const innerWidth = Math.max(10, shapeWidthPt - insetX * 2);
+  const lines: LayoutLine[] = [];
+  let textY = 0;
+  for (const paragraph of paragraphs) {
+    let paraHeight = 0;
+    for (const line of breaker.breakParagraph(paragraph, innerWidth)) {
+      line.bounds.y += textY;
+      paraHeight += line.bounds.height;
+      lines.push(line);
+    }
+    textY += paraHeight;
+  }
+  return { lines, x: insetX, y: insetY };
 }
 
 interface WordToken {
@@ -84,7 +122,7 @@ export class StandardLineBreaker implements LineBreaker {
     this.metrics = metrics;
   }
 
-  breakParagraph(paragraph: ParagraphNode, availableWidth: number): LayoutLine[] {
+  breakParagraph(paragraph: ParagraphNode, availableWidth: number, options?: LineBreakOptions): LayoutLine[] {
     const pStyle = paragraph.style;
     const alignment = pStyle?.alignment ?? 'left';
     const indentLeft = pStyle?.indentLeftPt ?? 0;
@@ -234,14 +272,25 @@ export class StandardLineBreaker implements LineBreaker {
         const computed = this.computeTabToken(i, tokens, currentXFromMargin, pStyle?.tabStops, {
           isNumberingTab: token.isNumberingTab,
           indentEndPt: indentLeft,
+          // A hanging indent is an implicit stop for the first line
+          // (F-TABHANG): "-<tab>text" lands the text on the indent.
+          hangingStopPt: isFirstLine && firstLineIndent < 0 ? indentLeft : undefined,
+          defaultIntervalPt: options?.defaultTabStopPt,
         });
         token.width = computed.width;
         token.tabLeader = computed.leader;
         token.barTab = computed.barTab;
+        if (currentTokens.length > 0 && currentLineWidth + token.width > maxLineWidth + WIDTH_EPSILON) {
+          // A tab never wraps on its own: Word runs it to the end of the
+          // line and wraps whatever follows (F-TABEND). This also keeps a
+          // trailing leader tab (dotted line to the right margin) on the
+          // line it belongs to.
+          token.width = Math.max(0, maxLineWidth - currentLineWidth);
+        }
       }
 
       // Check if adding this token overflows
-      if (currentLineWidth + token.width > maxLineWidth && currentTokens.length > 0) {
+      if (currentLineWidth + token.width > maxLineWidth + WIDTH_EPSILON && currentTokens.length > 0) {
         // If the current token is a space at the end of the line, skip it
         if (token.isSpace) {
           continue;
@@ -267,6 +316,7 @@ export class StandardLineBreaker implements LineBreaker {
           const computed = this.computeTabToken(i, tokens, newLineStartX, pStyle?.tabStops, {
             isNumberingTab: token.isNumberingTab,
             indentEndPt: indentLeft,
+            defaultIntervalPt: options?.defaultTabStopPt,
           });
           token.width = computed.width;
           token.tabLeader = computed.leader;
@@ -445,27 +495,36 @@ export class StandardLineBreaker implements LineBreaker {
     tokens: WordToken[],
     currentXFromMargin: number,
     tabStops?: TabStop[],
-    numberingTab?: { isNumberingTab?: boolean; indentEndPt?: number },
+    tabContext?: { isNumberingTab?: boolean; indentEndPt?: number; hangingStopPt?: number; defaultIntervalPt?: number },
   ): { width: number; leader?: TabLeader; barTab?: boolean } {
-    const defaultInterval = 36; // 720 twips = 36 pt
+    // w:defaultTabStop grid; Word's default is 720 twips = 36pt.
+    const defaultInterval =
+      tabContext?.defaultIntervalPt !== undefined && tabContext.defaultIntervalPt > 0 ? tabContext.defaultIntervalPt : 36;
 
     if (
-      numberingTab?.isNumberingTab &&
-      numberingTab.indentEndPt !== undefined &&
-      numberingTab.indentEndPt - currentXFromMargin > 0.5
+      tabContext?.isNumberingTab &&
+      tabContext.indentEndPt !== undefined &&
+      tabContext.indentEndPt - currentXFromMargin > 0.5
     ) {
       // The synthetic tab after a list number advances to the text indent
       // (hanging indent end), never to an explicit tab stop (F-NUMTAB).
       // Reference renderers ignore custom stops for this tab. A number
       // wider than the hanging indent has already passed the indent end,
       // so it falls through to the regular stop search below.
-      return { width: numberingTab.indentEndPt - currentXFromMargin, leader: 'none' };
+      return { width: tabContext.indentEndPt - currentXFromMargin, leader: 'none' };
     }
 
     // Look for the next custom tab stop ahead of current position
-    const matchedStop = (tabStops ?? [])
+    let matchedStop = (tabStops ?? [])
       .filter((ts) => ts.positionPt > currentXFromMargin + 2 && ts.alignment !== 'clear')
       .sort((a, b) => a.positionPt - b.positionPt)[0];
+
+    // The hanging indent of the first line is an implicit left stop; the
+    // nearer of it and the next custom stop wins (F-TABHANG).
+    const hangingStop = tabContext?.hangingStopPt;
+    if (hangingStop !== undefined && hangingStop - currentXFromMargin > 0.5 && (!matchedStop || hangingStop < matchedStop.positionPt)) {
+      matchedStop = { positionPt: hangingStop, alignment: 'left', leader: 'none' };
+    }
 
     if (matchedStop) {
       if (matchedStop.alignment === 'right' || matchedStop.alignment === 'center' || matchedStop.alignment === 'decimal') {

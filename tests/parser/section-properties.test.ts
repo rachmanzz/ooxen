@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { defaultXmlAdapter } from '../../src/parser/xml-adapter.js';
-import { parseSectionProperties } from '../../src/parser/wml/document-parser.js';
+import { parseDefaultTabStop, parseSectionProperties } from '../../src/parser/wml/document-parser.js';
 
 describe('ISO/IEC 29500 Section Properties Parser', () => {
   it('should parse orientation landscape from w:pgSz', () => {
@@ -79,5 +79,12 @@ describe('ISO/IEC 29500 Section Properties Parser', () => {
     expect(props.columns?.columns?.length).toBe(1);
     expect(props.columns?.columns?.[0]?.widthPt).toBeCloseTo(360, 5);
     expect(props.columns?.columns?.[0]?.spacePt).toBeUndefined();
+  });
+
+  it('reads w:defaultTabStop from settings.xml in points', () => {
+    const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+    expect(parseDefaultTabStop(defaultXmlAdapter.parse(`<w:settings ${W}><w:defaultTabStop w:val="454"/></w:settings>`))).toBeCloseTo(22.7, 5);
+    expect(parseDefaultTabStop(defaultXmlAdapter.parse(`<w:settings ${W}><w:zoom w:percent="100"/></w:settings>`))).toBeUndefined();
+    expect(parseDefaultTabStop(defaultXmlAdapter.parse(`<w:settings ${W}><w:defaultTabStop w:val="0"/></w:settings>`))).toBeUndefined();
   });
 });

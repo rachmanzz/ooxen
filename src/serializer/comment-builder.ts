@@ -1,5 +1,6 @@
 import type { CommentNode } from '../types/ast.js';
-import { commentNumericId, defaultWmlBuilder, escapeXml, type WmlBuilder } from './wml-builder.js';
+import { commentNumericId, defaultWmlBuilder, type WmlBuilder } from './wml-builder.js';
+import { escapeXml } from '../parser/xml-adapter.js';
 
 /**
  * Serializer for ISO/IEC 29500-1 Comments (word/comments.xml).

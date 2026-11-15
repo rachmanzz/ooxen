@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
   defaultXmlAdapter,
+  parseOnOff,
   serializeXmlNode,
   type XmlNode,
 } from '../../src/parser/xml-adapter.js';
@@ -88,5 +89,13 @@ describe('Lossless XML adapter (futures §5.1)', () => {
     expect(serializeXmlNode(node)).toBe('<w:t>a &lt; b &amp; c</w:t>');
     // Re-parse is stable: same infoset.
     expect(defaultXmlAdapter.parse(serializeXmlNode(node)).textContent).toBe('a < b & c');
+  });
+});
+
+describe('parseOnOff (ST_OnOff)', () => {
+  it('maps the six schema spellings and leaves the rest to the caller default', () => {
+    for (const v of ['1', 'true', 'on', ' On ', 'TRUE']) expect(parseOnOff(v)).toBe(true);
+    for (const v of ['0', 'false', 'off', ' Off ', 'FALSE']) expect(parseOnOff(v)).toBe(false);
+    for (const v of [undefined, '', '  ', 'yes', 'no', '2']) expect(parseOnOff(v)).toBeUndefined();
   });
 });

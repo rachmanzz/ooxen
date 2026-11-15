@@ -1,7 +1,7 @@
 import type { BlockNode, FootnoteNode } from '../../types/ast.js';
 import type { ImageResolver } from '../dml/image-parser.js';
 import { parseWithMarkupCompatibility } from '../mce.js';
-import { defaultXmlAdapter, type XmlAdapter, type XmlNode } from '../xml-adapter.js';
+import { localName, defaultXmlAdapter, type XmlAdapter, type XmlNode } from '../xml-adapter.js';
 import type { NumberingResolver } from './numbering-resolver.js';
 import { defaultParagraphParser, type HyperlinkResolver, type ParagraphParser } from './paragraph-parser.js';
 import type { StyleResolver } from './style-resolver.js';
@@ -52,7 +52,7 @@ export function parseFootnotesNode(
   const result: FootnoteNode[] = [];
 
   for (const child of rootNode.children) {
-    const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+    const tag = localName(child.nodeName);
     if (tag === 'footnote') {
       const idStr = child.attributes['w:id'] ?? child.attributes['id'];
       if (idStr === undefined) continue;
@@ -64,7 +64,7 @@ export function parseFootnotesNode(
 
       const blocks: BlockNode[] = [];
       for (const bChild of child.children) {
-        const bTag = bChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+        const bTag = localName(bChild.nodeName);
         if (bTag === 'p') {
           blocks.push(
             paragraphParser.parseParagraph(bChild, styleResolver, numberingResolver, imageResolver, hyperlinkResolver),
@@ -138,7 +138,7 @@ export function parseEndnotesNode(
   const result: FootnoteNode[] = [];
 
   for (const child of rootNode.children) {
-    const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+    const tag = localName(child.nodeName);
     if (tag === 'endnote') {
       const idStr = child.attributes['w:id'] ?? child.attributes['id'];
       if (idStr === undefined) continue;
@@ -150,7 +150,7 @@ export function parseEndnotesNode(
 
       const blocks: BlockNode[] = [];
       for (const bChild of child.children) {
-        const bTag = bChild.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+        const bTag = localName(bChild.nodeName);
         if (bTag === 'p') {
           blocks.push(
             paragraphParser.parseParagraph(bChild, styleResolver, numberingResolver, imageResolver, hyperlinkResolver),

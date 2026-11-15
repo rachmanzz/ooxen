@@ -1,7 +1,7 @@
 import type { BlockNode, HeaderFooterNode, HeaderFooterType } from '../../types/ast.js';
 import type { ImageResolver } from '../dml/image-parser.js';
 import { parseWithMarkupCompatibility } from '../mce.js';
-import { defaultXmlAdapter, type XmlAdapter, type XmlNode } from '../xml-adapter.js';
+import { localName, defaultXmlAdapter, type XmlAdapter, type XmlNode } from '../xml-adapter.js';
 import type { NumberingResolver } from './numbering-resolver.js';
 import { defaultParagraphParser, type HyperlinkResolver, type ParagraphParser } from './paragraph-parser.js';
 import type { StyleResolver } from './style-resolver.js';
@@ -48,13 +48,13 @@ export function parseHeaderFooterNode(
   paragraphParser: ParagraphParser = defaultParagraphParser,
   tableParser: TableParser = defaultTableParser,
 ): HeaderFooterNode {
-  const tagName = rootNode.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+  const tagName = localName(rootNode.nodeName);
   const type: 'header' | 'footer' = tagName === 'ftr' ? 'footer' : 'header';
 
   const children: BlockNode[] = [];
 
   for (const child of rootNode.children) {
-    const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+    const tag = localName(child.nodeName);
 
     if (tag === 'p') {
       const paragraph = paragraphParser.parseParagraph(

@@ -1,6 +1,6 @@
 import { twipsToPt } from '../../types/common.js';
 import type { ParagraphNumbering } from '../../types/style.js';
-import { defaultXmlAdapter, type XmlAdapter, type XmlNode } from '../xml-adapter.js';
+import { localName, defaultXmlAdapter, type XmlAdapter, type XmlNode } from '../xml-adapter.js';
 
 export type NumberFormatType =
   | 'decimal'
@@ -18,6 +18,8 @@ export interface NumberingLevelDefinition {
   levelText: string;
   indentLeftPt?: number;
   hangingPt?: number;
+  /** Signed first-line indent of the level: negative for w:hanging, positive for w:firstLine. */
+  firstLineIndentPt?: number;
   fontFamily?: string;
   fontSizePt?: number;
 }
@@ -35,6 +37,7 @@ export interface ConcreteNumberingInstance {
 export interface ResolvedNumbering extends ParagraphNumbering {
   indentLeftPt?: number;
   hangingPt?: number;
+  firstLineIndentPt?: number;
 }
 
 export interface NumberingResolver {
@@ -176,7 +179,7 @@ export class StandardNumberingResolver implements NumberingResolver {
     if (!numberingNode) return;
 
     for (const child of numberingNode.children) {
-      const tag = child.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+      const tag = localName(child.nodeName);
 
       if (tag === 'abstractnum') {
         const idStr = child.attributes['w:abstractNumId'] ?? child.attributes['abstractNumId'];
@@ -185,7 +188,7 @@ export class StandardNumberingResolver implements NumberingResolver {
         const levels = new Map<number, NumberingLevelDefinition>();
 
         for (const lvlNode of child.children) {
-          const lTag = lvlNode.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+          const lTag = localName(lvlNode.nodeName);
           if (lTag === 'lvl') {
             const ilvlStr = lvlNode.attributes['w:ilvl'] ?? lvlNode.attributes['ilvl'] ?? '0';
             const ilvl = Number.parseInt(ilvlStr, 10);
@@ -195,11 +198,12 @@ export class StandardNumberingResolver implements NumberingResolver {
             let levelText = `%${ilvl + 1}.`;
             let indentLeftPt: number | undefined;
             let hangingPt: number | undefined;
+            let firstLineIndentPt: number | undefined;
             let fontFamily: string | undefined;
             let fontSizePt: number | undefined;
 
             for (const prop of lvlNode.children) {
-              const pTag = prop.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+              const pTag = localName(prop.nodeName);
               if (pTag === 'start') {
                 const sVal = prop.attributes['w:val'] ?? prop.attributes['val'];
                 if (sVal) start = Number.parseInt(sVal, 10);
@@ -212,10 +216,17 @@ export class StandardNumberingResolver implements NumberingResolver {
               } else if (pTag === 'ppr') {
                 const ind = prop.children.find((c) => c.nodeName.toLowerCase().endsWith('ind'));
                 if (ind) {
-                  const left = ind.attributes['w:left'] ?? ind.attributes['left'];
-                  const hanging = ind.attributes['w:hanging'] ?? ind.attributes['hanging'];
+                  const attr = (name: string): string | undefined => ind.attributes[`w:${name}`] ?? ind.attributes[name];
+                  const left = attr('left') ?? attr('start');
+                  const hanging = attr('hanging');
+                  const firstLine = attr('firstLine') ?? attr('firstline');
                   if (left) indentLeftPt = twipsToPt(Number(left));
-                  if (hanging) hangingPt = twipsToPt(Number(hanging));
+                  if (hanging) {
+                    hangingPt = twipsToPt(Number(hanging));
+                    firstLineIndentPt = -hangingPt;
+                  } else if (firstLine) {
+                    firstLineIndentPt = twipsToPt(Number(firstLine));
+                  }
                 }
               } else if (pTag === 'rpr') {
                 const fonts = prop.children.find((c) => c.nodeName.toLowerCase().endsWith('rfonts'));
@@ -234,6 +245,7 @@ export class StandardNumberingResolver implements NumberingResolver {
               levelText,
               indentLeftPt,
               hangingPt,
+              firstLineIndentPt,
               fontFamily,
               fontSizePt,
             });
@@ -304,6 +316,7 @@ export class StandardNumberingResolver implements NumberingResolver {
         prefixText,
         indentLeftPt: levelDef.indentLeftPt,
         hangingPt: levelDef.hangingPt,
+        firstLineIndentPt: levelDef.firstLineIndentPt,
         // The level font only applies when the glyph it was authored for
         // survives normalization; a PUA bullet rewritten to Unicode in a
         // symbol font would render as a notdef box (F-NUMFONT).
@@ -320,6 +333,7 @@ export class StandardNumberingResolver implements NumberingResolver {
         prefixText: '',
         indentLeftPt: levelDef.indentLeftPt,
         hangingPt: levelDef.hangingPt,
+        firstLineIndentPt: levelDef.firstLineIndentPt,
       };
     }
 
@@ -339,6 +353,7 @@ export class StandardNumberingResolver implements NumberingResolver {
       prefixText: resolvedText,
       indentLeftPt: levelDef.indentLeftPt,
       hangingPt: levelDef.hangingPt,
+      firstLineIndentPt: levelDef.firstLineIndentPt,
       prefixFontFamily: levelDef.fontFamily,
       prefixFontSizePt: levelDef.fontSizePt,
     };

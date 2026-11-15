@@ -14,6 +14,8 @@
  * is not licensable on viewer machines.
  */
 
+import { escapeXml } from '../xml-adapter.js';
+
 interface WmfFont {
   face: string;
   heightUnits: number;
@@ -117,10 +119,6 @@ function u16(data: Uint8Array, off: number): number {
 function i16(data: Uint8Array, off: number): number {
   const v = u16(data, off);
   return v >= 0x8000 ? v - 0x10000 : v;
-}
-
-function escapeXml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /** COLORREF 0x00BBGGRR is little-endian on disk, so bytes arrive R, G, B. */
@@ -474,7 +472,7 @@ function previewToSvg(preview: WmfPreview): string {
     // lowest run kisses the metafile bbox bottom); there is no ascent
     // offset unlike TA_TOP-positioned text.
     parts.push(
-      `<text x="${t.x}" y="${round2(t.y)}" font-size="${round2(t.sizePt)}" font-family="${t.face}" fill="${t.color}"${slant}>${escapeXml(t.text)}</text>`,
+      `<text x="${t.x}" y="${round2(t.y)}" font-size="${round2(t.sizePt)}" font-family="${escapeXml(t.face)}" fill="${t.color}"${slant}>${escapeXml(t.text)}</text>`,
     );
   }
   return (

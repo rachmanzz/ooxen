@@ -57,6 +57,16 @@ export class SimpleTextMetricsMeasurer implements TextMetricsMeasurer {
       }
     }
 
+    // A monospace face has one advance for every glyph (bold included),
+    // so the proportional heuristic would misplace centred titles and
+    // wrap lines early; use the documented fixed 0.6em advance instead.
+    if (isMonospaceFamily(style?.fontFamily)) {
+      const width = text.length * fontSize * 0.6;
+      const ascent = fontSize * 0.82;
+      const descent = fontSize * 0.22;
+      return { width, height: ascent + descent, ascent, descent };
+    }
+
     return this.measureWithHeuristic(text, fontSize, isBold);
   }
 
@@ -171,9 +181,9 @@ export function isMonospaceFamily(fontFamily?: string): boolean {
  * fixed advance for monospace families when no real font is available (v1 F6).
  */
 export function measureTextWidth(text: string, fontSize: number, isBold = false, fontFamily?: string): number {
-  const boldFactor = isBold ? 1.06 : 1.0;
   if (!globalFontMetrics.has(fontFamily) && isMonospaceFamily(fontFamily)) {
-    return text.length * fontSize * 0.6 * boldFactor;
+    // Monospace advances do not change with weight.
+    return text.length * fontSize * 0.6;
   }
   return defaultTextMetrics.measureText(text, { fontSizePt: fontSize, bold: isBold, fontFamily }).width;
 }

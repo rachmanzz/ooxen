@@ -114,6 +114,12 @@
   max-width: none;
 }
 
+/* Empty host of a block-level float: one line of flow, like the empty
+   paragraph Word anchors it to. */
+.ooxen-document .ooxen-float-host {
+  min-height: 1.15em;
+}
+
 .ooxen-document .ooxen-behind-doc {
   z-index: -1;
 }

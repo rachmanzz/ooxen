@@ -34,6 +34,8 @@ export interface ParagraphNumbering {
   prefixFontSizePt?: number; // from the numbering level rPr sz (half-points)
 }
 
+export type LineSpacingRule = 'auto' | 'atLeast' | 'exact' | 'atMost';
+
 export interface ParagraphStyle {
   alignment?: TextAlignment;
   /**
@@ -43,7 +45,19 @@ export interface ParagraphStyle {
    * paragraph carries no direct mark formatting.
    */
   markFontSizePt?: number;
+  /**
+   * `w:spacing` line height in points for the `atLeast`, `exact`, and
+   * `atMost` rules. For `auto` it is an approximation of the multiple
+   * applied to an 11pt line (kept for consumers that only read points);
+   * the engine uses `lineSpacingMultiple` instead.
+   */
   lineSpacingPt?: number;
+  /** `w:spacing` lineRule. Absent with `lineSpacingPt` set means `atLeast`. */
+  lineSpacingRule?: LineSpacingRule;
+  /** Multiple of a single line for `lineRule="auto"` (`w:line` / 240). */
+  lineSpacingMultiple?: number;
+  /** `w:contextualSpacing`: no space between neighbours of the same paragraph style. */
+  contextualSpacing?: boolean;
   spaceBeforePt?: number;
   spaceAfterPt?: number;
   indentLeftPt?: number;

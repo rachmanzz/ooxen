@@ -94,6 +94,12 @@ export interface ImageAnchor {
   /** Alignment keyword (`w:align`: top/center/bottom/...) when no `w:posOffset` is present. */
   verticalAlign?: string;
   behindDoc?: boolean;
+  /**
+   * `wp:anchor@layoutInCell`: false lets a float inside a table cell
+   * position against the page or margins instead of the cell box
+   * (letterhead logos, watermarks). Undefined means Word's default, true.
+   */
+  layoutInCell?: boolean;
 }
 
 export interface HyperlinkInfo {
@@ -148,6 +154,8 @@ export interface RunNode extends BaseASTNode {
 
 export interface ParagraphNode extends BaseASTNode {
   type: 'paragraph';
+  /** `w:pStyle` id, when the paragraph names one (contextual spacing compares it). */
+  styleId?: string;
   style?: ParagraphStyle;
   children: RunNode[];
   bookmarkName?: string;
@@ -278,10 +286,17 @@ export interface CommentNode extends BaseASTNode {
   children: BlockNode[];
 }
 
+/** Document-wide switches from word/settings.xml that affect layout. */
+export interface DocumentLayoutSettings {
+  /** `w:defaultTabStop` in points; Word's own default is 36pt (720 twips). */
+  defaultTabStopPt?: number;
+}
+
 export interface DocumentNode extends BaseASTNode {
   type: 'document';
   sections: SectionNode[];
   metadata?: DocumentMetadata;
+  settings?: DocumentLayoutSettings;
   footnotes?: FootnoteNode[];
   endnotes?: FootnoteNode[];
   comments?: CommentNode[];

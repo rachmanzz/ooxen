@@ -9,7 +9,7 @@
  */
 
 import type { OpcPackage } from '../opc/package.js';
-import { defaultXmlAdapter } from '../parser/xml-adapter.js';
+import { localName, defaultXmlAdapter } from '../parser/xml-adapter.js';
 import { globalFontMetrics, type FontMetricsRegistry, type FontVariant } from './font-metrics-registry.js';
 
 const FONT_TABLE_PART = 'word/fontTable.xml';
@@ -55,7 +55,7 @@ export function loadEmbeddedFonts(pkg: OpcPackage, registry: FontMetricsRegistry
       if (!family) continue;
 
       for (const embed of fontNode.children) {
-        const tag = embed.nodeName.replace(/^[a-zA-Z0-9]+:/, '').toLowerCase();
+        const tag = localName(embed.nodeName);
         let variant: FontVariant | undefined;
         if (tag === 'embedregular') variant = 'regular';
         else if (tag === 'embedbold') variant = 'bold';

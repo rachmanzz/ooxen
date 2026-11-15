@@ -104,6 +104,33 @@ describe('ISO/IEC 29500 Pagination Controls Serializer & Round-Trip', () => {
       expect(css['break-inside']).toBe('avoid');
     });
 
+    it('maps auto line spacing to a unitless line-height and fixed rules to points', () => {
+      expect(defaultStyleMapper.paragraphStyleToCss({ lineSpacingRule: 'auto', lineSpacingMultiple: 1, lineSpacingPt: 13.2 })['line-height']).toBe('1.2');
+      expect(defaultStyleMapper.paragraphStyleToCss({ lineSpacingRule: 'auto', lineSpacingMultiple: 2 })['line-height']).toBe('2.4');
+      expect(defaultStyleMapper.paragraphStyleToCss({ lineSpacingRule: 'exact', lineSpacingPt: 12 })['line-height']).toBe('12pt');
+      expect(defaultStyleMapper.paragraphStyleToCss({ lineSpacingPt: 18 })['line-height']).toBe('18pt');
+    });
+
+    it('writes w:pStyle, the line rule, and w:contextualSpacing back out', () => {
+      const xml = defaultWmlBuilder.buildParagraphXml({
+        type: 'paragraph',
+        styleId: 'Heading1',
+        style: { lineSpacingRule: 'auto', lineSpacingMultiple: 1.5, lineSpacingPt: 19.8, contextualSpacing: true, firstLineIndentPt: 18 },
+        children: [{ type: 'run', text: 'x' }],
+      });
+      expect(xml).toContain('<w:pStyle w:val="Heading1"/>');
+      expect(xml).toContain('w:line="360" w:lineRule="auto"');
+      expect(xml).toContain('<w:contextualSpacing/>');
+      expect(xml).toContain('w:firstLine="360"');
+      const exact = defaultWmlBuilder.buildParagraphXml({
+        type: 'paragraph',
+        style: { lineSpacingRule: 'exact', lineSpacingPt: 12 },
+        children: [{ type: 'run', text: 'x' }],
+      });
+      expect(exact).toContain('w:line="240" w:lineRule="exact"');
+      expect(exact).not.toContain('w:pStyle');
+    });
+
     it('should render page break and column break spans in HTML', () => {
       const doc: DocumentNode = {
         type: 'document',

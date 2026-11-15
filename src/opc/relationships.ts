@@ -1,4 +1,4 @@
-import { defaultXmlAdapter, type XmlAdapter } from '../parser/xml-adapter.js';
+import { defaultXmlAdapter, escapeXml, type XmlAdapter } from '../parser/xml-adapter.js';
 
 /**
  * ISO/IEC 29500-2: OPC Relationships (.rels) handling.
@@ -24,6 +24,7 @@ export const RELATIONSHIPS_NAMESPACE = 'http://schemas.openxmlformats.org/packag
 export const KNOWN_RELATIONSHIPS = {
   DOCUMENT: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument',
   STYLES: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles',
+  THEME: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme',
   NUMBERING: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering',
   SETTINGS: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings',
   IMAGE: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image',
@@ -85,9 +86,9 @@ export function serializeRelationships(rels: OpcRelationship[]): string {
   // Attribute values must be XML-escaped: unescaped &, <, ", or > in an id,
   // type, or target produces malformed XML and a corrupt package (v1 F19).
   for (const r of rels) {
-    const targetModeAttr = r.targetMode ? ` TargetMode="${escapeXmlAttribute(r.targetMode)}"` : '';
+    const targetModeAttr = r.targetMode ? ` TargetMode="${escapeXml(r.targetMode)}"` : '';
     lines.push(
-      `  <Relationship Id="${escapeXmlAttribute(r.id)}" Type="${escapeXmlAttribute(r.type)}" Target="${escapeXmlAttribute(r.target)}"${targetModeAttr}/>`
+      `  <Relationship Id="${escapeXml(r.id)}" Type="${escapeXml(r.type)}" Target="${escapeXml(r.target)}"${targetModeAttr}/>`
     );
   }
 
@@ -95,6 +96,3 @@ export function serializeRelationships(rels: OpcRelationship[]): string {
   return lines.join('\n');
 }
 
-function escapeXmlAttribute(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
